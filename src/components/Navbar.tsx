@@ -41,7 +41,7 @@ export default function Navbar({ onBack, onPreview, isPreview }: NavbarProps) {
 
   return (
     <header className={styles.navbar}>
-      {/* Left — logo + back + name */}
+      {/* Left — logo + back + name + save status */}
       <div className={styles.left}>
         <button className={styles.backBtn} onClick={onBack} title="Back to home">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -50,7 +50,7 @@ export default function Navbar({ onBack, onPreview, isPreview }: NavbarProps) {
         </button>
         <div className={styles.logoMark}>F</div>
         <span className={styles.logoText}>Fontly</span>
-        <span className={styles.divider} />
+        <span className={styles.dividerV} />
         {editingName ? (
           <input
             ref={nameRef}
@@ -80,14 +80,13 @@ export default function Navbar({ onBack, onPreview, isPreview }: NavbarProps) {
         </span>
       </div>
 
-      {/* Center — view switcher + undo/redo + zoom */}
+      {/* Center — view switcher (truly centered via absolute positioning) */}
       <div className={styles.center}>
-        {/* View switcher */}
         <div className={styles.viewSwitcher}>
           <button
             className={`${styles.viewBtn} ${!isPreview ? styles.viewBtnActive : ''}`}
             onClick={() => isPreview && onPreview()}
-            title="Editor view"
+            title="Editor view (Ctrl+P)"
           >
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
               <rect x="1.5" y="1.5" width="4" height="4" rx="1" stroke="currentColor" strokeWidth="1.3"/>
@@ -100,7 +99,7 @@ export default function Navbar({ onBack, onPreview, isPreview }: NavbarProps) {
           <button
             className={`${styles.viewBtn} ${isPreview ? styles.viewBtnActive : ''}`}
             onClick={() => !isPreview && onPreview()}
-            title="Preview view"
+            title="Preview view (Ctrl+P)"
           >
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
               <path d="M1 6.5S3 2 6.5 2 12 6.5 12 6.5 10 11 6.5 11 1 6.5 1 6.5z" stroke="currentColor" strokeWidth="1.3"/>
@@ -109,9 +108,10 @@ export default function Navbar({ onBack, onPreview, isPreview }: NavbarProps) {
             Preview
           </button>
         </div>
+      </div>
 
-        <span className={styles.divider} />
-
+      {/* Right — undo/redo + zoom + font settings + save project */}
+      <div className={styles.right}>
         {/* Undo/redo — hidden in preview */}
         {!isPreview && (
           <div className={styles.btnGroup}>
@@ -158,10 +158,9 @@ export default function Navbar({ onBack, onPreview, isPreview }: NavbarProps) {
             </button>
           </div>
         )}
-      </div>
 
-      {/* Right — Font settings panel + Save project */}
-      <div className={styles.right}>
+        <span className={styles.dividerV} />
+
         {/* Font settings / export panel */}
         <FontPanel />
 

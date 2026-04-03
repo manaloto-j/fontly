@@ -51,6 +51,73 @@
   transition: width 0.3s ease;
 }
 
+/* ── Action buttons row ── */
+.actionsRow {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.actionBtn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+
+.actionBtn:hover:not(:disabled) {
+  background: var(--highlight);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.actionBtnDanger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #ef4444;
+}
+
+.actionBtnDisabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Import feedback ── */
+.feedbackSuccess {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #2d8a5a;
+  background: rgba(76, 175, 125, 0.08);
+  border-bottom: 1px solid rgba(76, 175, 125, 0.2);
+}
+
+.feedbackError {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 11px;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.07);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.15);
+  line-height: 1.4;
+}
+
 /* ── Special chars toggle ── */
 .toggleRow {
   display: flex;
@@ -194,4 +261,134 @@
 .charPillActive {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* ── Clear confirmation modal ── */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: backdropIn 0.15s ease;
+}
+
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  animation: modalIn 0.18s ease;
+  overflow: hidden;
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modalIconDanger {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #ef4444;
+}
+
+.modalTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.modalSubtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
+.modalBody {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modalText {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.modalText strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.modalFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+}
+
+.modalCancelBtn {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  transition: all 0.12s;
+}
+
+.modalCancelBtn:hover {
+  background: var(--highlight);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.modalDangerBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: white;
+  background: #ef4444;
+  border: 1px solid #ef4444;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  transition: all 0.12s;
+}
+
+.modalDangerBtn:hover {
+  background: #dc2626;
+  border-color: #dc2626;
 }

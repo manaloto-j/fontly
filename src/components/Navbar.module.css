@@ -2,12 +2,11 @@
   height: 48px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 0 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
-  gap: 12px;
+  position: relative; /* needed for absolute center */
   z-index: 50;
 }
 
@@ -59,7 +58,7 @@
   flex-shrink: 0;
 }
 
-.divider {
+.dividerV {
   width: 1px;
   height: 16px;
   background: var(--border);
@@ -106,12 +105,14 @@
 .saving { color: var(--text-tertiary); }
 .unsaved { color: #e07b00; }
 
-/* ── Center ── */
+/* ── Center — absolutely positioned so it's always truly centered ── */
 .center {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  pointer-events: none; /* passthrough except for the switcher itself */
 }
 
 /* View switcher */
@@ -121,6 +122,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
+  pointer-events: all;
 }
 
 .viewBtn {
@@ -131,7 +133,7 @@
   font-weight: 500;
   color: var(--text-secondary);
   background: var(--surface);
-  padding: 0 10px;
+  padding: 0 12px;
   height: 28px;
   transition: background 0.12s, color 0.12s;
   border-right: 1px solid var(--border);
@@ -144,6 +146,14 @@
 .viewBtnActive {
   background: var(--accent) !important;
   color: white !important;
+}
+
+/* ── Right ── */
+.right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .btnGroup {
@@ -198,14 +208,6 @@
   font-variant-numeric: tabular-nums;
 }
 .zoomValue:hover { background: var(--highlight); }
-
-/* ── Right ── */
-.right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
 
 /* Save project button */
 .saveBtn {

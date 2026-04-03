@@ -2,8 +2,87 @@
   padding: 24px 28px;
   overflow-y: auto;
   flex: 1;
+  position: relative;
+  transition: background 0.15s;
 }
 
+.root.dragging {
+  background: rgba(26, 26, 26, 0.03);
+}
+
+/* ── Drag overlay ── */
+.dragOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(26, 26, 26, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: overlayIn 0.15s ease;
+}
+
+@keyframes overlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.dragOverlayInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: white;
+  font-size: 18px;
+  font-weight: 500;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px dashed rgba(255, 255, 255, 0.4);
+  border-radius: 20px;
+  padding: 48px 64px;
+  animation: innerIn 0.18s ease;
+}
+
+@keyframes innerIn {
+  from { transform: scale(0.95); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+.dragOverlayHint {
+  font-size: 13px;
+  font-weight: 400;
+  opacity: 0.65;
+}
+
+/* ── Import toast ── */
+.importToast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  animation: toastIn 0.2s ease;
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ── Section ── */
 .section {
   margin-bottom: 36px;
 }
@@ -38,10 +117,7 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  transition:
-    border-color 0.15s,
-    box-shadow 0.15s,
-    background 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
   outline: none;
 }
 
@@ -65,7 +141,6 @@
   border-color: var(--border);
 }
 
-/* Faint character watermark */
 .watermark {
   position: absolute;
   inset: 0;
@@ -86,7 +161,6 @@
   opacity: 0;
 }
 
-/* Upload icon */
 .uploadPrompt {
   display: flex;
   align-items: center;
@@ -102,7 +176,6 @@
   opacity: 1;
 }
 
-/* SVG preview */
 .svgPreview {
   position: absolute;
   inset: 6px;
@@ -118,7 +191,6 @@
   object-fit: contain;
 }
 
-/* Edit overlay for filled cells */
 .editOverlay {
   position: absolute;
   inset: 0;
@@ -141,7 +213,6 @@
   opacity: 1;
 }
 
-/* Codepoint label */
 .cpLabel {
   position: absolute;
   bottom: 4px;
@@ -163,7 +234,6 @@
   opacity: 1;
 }
 
-/* Hide cp label when edit overlay is shown */
 .cellFilled:hover .cpLabel {
   opacity: 0;
 }

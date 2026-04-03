@@ -9,7 +9,6 @@ interface GlyphEditorProps {
   onClose: () => void
 }
 
-// Flat ordered list of all visible codepoints
 function useOrderedCodepoints() {
   const specialCharsEnabled = useFontStore(s => s.project.specialCharsEnabled)
   const groups = CHAR_GROUPS.filter(g => !g.special || specialCharsEnabled)
@@ -17,11 +16,11 @@ function useOrderedCodepoints() {
 }
 
 const GUIDE_LINES = [
-  { key: 'ascender',   label: 'Ascender',   defaultY: 0.08,  color: '#4a9eff' },
-  { key: 'capHeight',  label: 'Cap Height',  defaultY: 0.18,  color: '#a78bfa' },
-  { key: 'xHeight',    label: 'x-Height',    defaultY: 0.38,  color: '#34d399' },
-  { key: 'baseline',   label: 'Baseline',    defaultY: 0.75,  color: '#f59e0b' },
-  { key: 'descender',  label: 'Descender',   defaultY: 0.88,  color: '#f87171' },
+  { key: 'ascender',  label: 'Ascender',  defaultY: 0.08, color: '#4a9eff' },
+  { key: 'capHeight', label: 'Cap Height', defaultY: 0.18, color: '#a78bfa' },
+  { key: 'xHeight',   label: 'x-Height',   defaultY: 0.38, color: '#34d399' },
+  { key: 'baseline',  label: 'Baseline',   defaultY: 0.75, color: '#f59e0b' },
+  { key: 'descender', label: 'Descender',  defaultY: 0.88, color: '#f87171' },
 ]
 
 const DEFAULT_ADJUSTMENTS: GlyphAdjustments = {
@@ -37,6 +36,42 @@ const DEFAULT_ADJUSTMENTS: GlyphAdjustments = {
   leftBearing: 50,
 }
 
+// ── Local history for undo within glyph editor ────────────────────────────────
+function useAdjustmentHistory(initial: GlyphAdjustments) {
+  const [stack, setStack] = useState<GlyphAdjustments[]>([initial])
+  const [index, setIndex] = useState(0)
+
+  const push = useCallback((adj: GlyphAdjustments) => {
+    setStack(prev => {
+      const next = prev.slice(0, index + 1)
+      next.push({ ...adj })
+      if (next.length > 60) next.shift()
+      return next
+    })
+    setIndex(prev => Math.min(prev + 1, 59))
+  }, [index])
+
+  const undo = useCallback(() => {
+    if (index <= 0) return null
+    const newIndex = index - 1
+    setIndex(newIndex)
+    return stack[newIndex]
+  }, [index, stack])
+
+  const redo = useCallback(() => {
+    if (index >= stack.length - 1) return null
+    const newIndex = index + 1
+    setIndex(newIndex)
+    return stack[newIndex]
+  }, [index, stack])
+
+  const canUndo = index > 0
+  const canRedo = index < stack.length - 1
+  const current = stack[index]
+
+  return { current, push, undo, redo, canUndo, canRedo }
+}
+
 export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   const glyphs = useFontStore(s => s.project.glyphs)
   const updateAdjustments = useFontStore(s => s.updateAdjustments)
@@ -47,9 +82,12 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   const currentIndex = orderedCps.indexOf(codepoint)
 
   const glyph = glyphs[codepoint]
-  const adj: GlyphAdjustments = { ...DEFAULT_ADJUSTMENTS, ...(glyph?.adjustments ?? {}) }
+  const storedAdj: GlyphAdjustments = { ...DEFAULT_ADJUSTMENTS, ...(glyph?.adjustments ?? {}) }
 
-  // Find character from codepoint
+  // Local adjustment history for per-editor Ctrl+Z
+  const adjHistory = useAdjustmentHistory(storedAdj)
+  const adj = adjHistory.current
+
   const allChars = CHAR_GROUPS.filter(g => !g.special || specialCharsEnabled)
     .flatMap(g => g.characters)
   const char = allChars.find(ch => toCodepoint(ch) === codepoint) ?? '?'
@@ -60,32 +98,46 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   })
 
   const [activeTab, setActiveTab] = useState<'transform' | 'spacing' | 'guides'>('transform')
-  const [dragging, setDragging] = useState<string | null>(null)
-  const canvasRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Navigate to prev/next
   const goTo = useCallback((dir: -1 | 1) => {
     const nextIndex = currentIndex + dir
     if (nextIndex < 0 || nextIndex >= orderedCps.length) return
-    // We bubble up via a custom event so Editor.tsx can update activeCodepoint
     const event = new CustomEvent('glyph-navigate', { detail: orderedCps[nextIndex] })
     window.dispatchEvent(event)
   }, [currentIndex, orderedCps])
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts — Ctrl+Z / Ctrl+Y for local undo in editor
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      const ctrl = e.ctrlKey || e.metaKey
+      if (e.key === 'Escape') { onClose(); return }
       if (e.key === 'ArrowLeft' && (e.ctrlKey || e.metaKey || e.altKey)) { e.preventDefault(); goTo(-1) }
       if (e.key === 'ArrowRight' && (e.ctrlKey || e.metaKey || e.altKey)) { e.preventDefault(); goTo(1) }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [onClose, goTo])
 
+      // Local undo/redo for adjustments
+      if (ctrl && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        e.stopPropagation() // prevent global undo
+        const prev = adjHistory.undo()
+        if (prev) updateAdjustments(codepoint, prev)
+      }
+      if (ctrl && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault()
+        e.stopPropagation()
+        const next = adjHistory.redo()
+        if (next) updateAdjustments(codepoint, next)
+      }
+    }
+    window.addEventListener('keydown', handler, { capture: true })
+    return () => window.removeEventListener('keydown', handler, { capture: true })
+  }, [onClose, goTo, adjHistory, codepoint, updateAdjustments])
+
+  // Update both local history and store
   const update = (patch: Partial<GlyphAdjustments>) => {
-    updateAdjustments(codepoint, { ...adj, ...patch })
+    const next = { ...adj, ...patch }
+    adjHistory.push(next)
+    updateAdjustments(codepoint, next)
   }
 
   const handleUpload = () => fileInputRef.current?.click()
@@ -98,18 +150,34 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     e.target.value = ''
   }
 
-  const resetAdj = () => updateAdjustments(codepoint, DEFAULT_ADJUSTMENTS)
+  const resetAdj = () => {
+    adjHistory.push(DEFAULT_ADJUSTMENTS)
+    updateAdjustments(codepoint, DEFAULT_ADJUSTMENTS)
+  }
 
-  // Build SVG transform string for preview
-  const svgTransform = [
-    `scale(${adj.flipH ? -1 : 1} ${adj.flipV ? -1 : 1})`,
-    `rotate(${adj.rotate})`,
-    `translate(${adj.offsetX} ${adj.offsetY})`,
-    `scale(${adj.scaleX} ${adj.scaleY})`,
-  ].join(' ')
-
+  // ── Build SVG transform for live preview ────────────────────────────────────
+  // Use SVG-native transform on the wrapper for accurate visual representation
+  // that matches what the export engine will produce.
   const CANVAS_W = 480
   const CANVAS_H = 520
+
+  // Center of canvas for transform origin
+  const cx = CANVAS_W / 2
+  const cy = CANVAS_H / 2
+
+  // Build SVG transform string applied to a <g> wrapping the SVG content.
+  // Order: translate(offset) → rotate(around center) → scale(around center) → flip
+  const buildSVGTransform = () => {
+    const parts: string[] = []
+
+    // Translate to center, apply transforms, translate back
+    parts.push(`translate(${cx}, ${cy})`)
+    if (adj.rotate !== 0) parts.push(`rotate(${adj.rotate})`)
+    parts.push(`scale(${adj.scaleX * (adj.flipH ? -1 : 1)}, ${adj.scaleY * (adj.flipV ? -1 : 1)})`)
+    parts.push(`translate(${-cx + adj.offsetX}, ${-cy + adj.offsetY})`)
+
+    return parts.join(' ')
+  }
 
   return (
     <div className={styles.root}>
@@ -136,6 +204,32 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
               )}
             </span>
           </div>
+        </div>
+
+        {/* Local undo/redo indicators */}
+        <div className={styles.localUndoRow}>
+          <button
+            className={styles.localUndoBtn}
+            onClick={() => { const p = adjHistory.undo(); if (p) updateAdjustments(codepoint, p) }}
+            disabled={!adjHistory.canUndo}
+            title="Undo transform change (Ctrl+Z)"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2 4h5a3 3 0 0 1 0 6H5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M2 4l2.5-2.5M2 4l2.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          <button
+            className={styles.localUndoBtn}
+            onClick={() => { const n = adjHistory.redo(); if (n) updateAdjustments(codepoint, n) }}
+            disabled={!adjHistory.canRedo}
+            title="Redo transform change (Ctrl+Y)"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M10 4H5a3 3 0 0 0 0 6h2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M10 4l-2.5-2.5M10 4l-2.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
         </div>
 
         <div className={styles.navButtons}>
@@ -168,11 +262,8 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
 
         {/* Canvas area */}
         <div className={styles.canvasArea}>
-          <div
-            ref={canvasRef}
-            className={styles.canvas}
-            style={{ width: CANVAS_W, height: CANVAS_H }}
-          >
+          <div className={styles.canvas} style={{ width: CANVAS_W, height: CANVAS_H }}>
+
             {/* Guide lines */}
             {GUIDE_LINES.map(g => visibleGuides[g.key] && (
               <div
@@ -184,15 +275,13 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
               </div>
             ))}
 
-            {/* Left bearing line */}
+            {/* Left/right bearing lines */}
             {visibleGuides.leftBearing && (
               <div
                 className={styles.guideLineV}
                 style={{ left: `${(adj.leftBearing / adj.advanceWidth) * 100}%`, '--guide-color': '#94a3b8' } as React.CSSProperties}
               />
             )}
-
-            {/* Right bearing line */}
             {visibleGuides.rightBearing && (
               <div
                 className={styles.guideLineV}
@@ -200,19 +289,29 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
               />
             )}
 
-            {/* Baseline horizontal emphasis */}
-            <div className={styles.baselineEmphasis} style={{ top: '75%' }} />
-
-            {/* SVG content */}
+            {/* SVG content — rendered as an inline SVG so transforms are native */}
             {glyph?.svgContent ? (
-              <div
-                className={styles.svgWrapper}
-                style={{
-                  transform: svgTransform,
-                  transformOrigin: 'center center',
-                }}
-                dangerouslySetInnerHTML={{ __html: glyph.svgContent }}
-              />
+              <div className={styles.svgWrapper}>
+                <svg
+                  width={CANVAS_W}
+                  height={CANVAS_H}
+                  viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
+                  style={{ position: 'absolute', inset: 0 }}
+                >
+                  <g transform={buildSVGTransform()}>
+                    {/* Embed the glyph SVG content via foreignObject workaround:
+                        We parse and inline the SVG's inner content */}
+                    <image
+                      href={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(glyph.svgContent)}`}
+                      x={0}
+                      y={0}
+                      width={CANVAS_W}
+                      height={CANVAS_H}
+                      preserveAspectRatio="xMidYMid meet"
+                    />
+                  </g>
+                </svg>
+              </div>
             ) : (
               <div className={styles.emptyCanvas}>
                 <div className={styles.emptyChar}>{char}</div>
@@ -226,7 +325,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
               </div>
             )}
 
-            {/* Replace button when filled */}
+            {/* Replace button */}
             {glyph?.svgContent && (
               <button className={styles.replaceBtn} onClick={handleUpload} title="Replace SVG">
                 <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
@@ -244,12 +343,12 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             <span>Advance: {adj.advanceWidth}u</span>
             <span>LSB: {adj.leftBearing}u</span>
             <span>Rotate: {adj.rotate}°</span>
+            <span>Scale: {adj.scaleX.toFixed(2)}×{adj.scaleY.toFixed(2)}</span>
           </div>
         </div>
 
         {/* Controls panel */}
         <div className={styles.controls}>
-          {/* Tab bar */}
           <div className={styles.tabs}>
             {(['transform', 'spacing', 'guides'] as const).map(tab => (
               <button
@@ -454,10 +553,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     <div className={styles.spacingGlyph}>
                       <span>{char}</span>
                     </div>
-                    <div
-                      className={styles.spacingRSB}
-                      style={{ flex: 1 }}
-                    />
+                    <div className={styles.spacingRSB} style={{ flex: 1 }} />
                   </div>
                   <div className={styles.spacingLabels}>
                     <span>LSB</span>
@@ -475,10 +571,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
 
                 {GUIDE_LINES.map(g => (
                   <div key={g.key} className={styles.guideToggleRow}>
-                    <span
-                      className={styles.guideColorDot}
-                      style={{ background: g.color }}
-                    />
+                    <span className={styles.guideColorDot} style={{ background: g.color }} />
                     <span className={styles.guideName}>{g.label}</span>
                     <button
                       className={`${styles.toggleSmall} ${visibleGuides[g.key] ? styles.toggleSmallOn : ''}`}

@@ -40,6 +40,9 @@ const INITIAL_PROJECT: FontProject = {
   updatedAt: Date.now(),
 };
 
+// ── History entry now tracks full glyph state (including adjustments) ──────────
+// This allows Ctrl+Z to undo slider changes per-glyph
+
 interface FontStore {
   project: FontProject;
   history: HistoryEntry[];
@@ -50,8 +53,10 @@ interface FontStore {
 
   // Glyph actions
   uploadGlyph: (codepoint: string, svgContent: string, fileName: string) => void;
+  uploadMultipleGlyphs: (entries: Array<{ codepoint: string; svgContent: string; fileName: string }>) => void;
   updateAdjustments: (codepoint: string, adjustments: GlyphAdjustments) => void;
   selectGlyph: (codepoint: string) => void;
+  clearAllGlyphs: () => void;
 
   // Font metadata & metrics
   setFontName: (name: string) => void;
@@ -72,13 +77,15 @@ interface FontStore {
   zoomOut: () => void;
   resetZoom: () => void;
 
-  // Export (legacy .fontly JSON project file)
+  // Project file I/O
   exportProject: () => void;
+  importProject: (jsonString: string) => { success: boolean; error?: string };
 }
 
 export const useFontStore = create<FontStore>()(
   persist(
     (set, get) => {
+      // Push current glyph state onto history stack
       const pushHistory = (glyphs: Record<string, GlyphData>) => {
         const { history, historyIndex } = get();
         const newHistory = history.slice(0, historyIndex + 1);
@@ -86,12 +93,17 @@ export const useFontStore = create<FontStore>()(
           glyphs: JSON.parse(JSON.stringify(glyphs)),
           timestamp: Date.now(),
         });
-        if (newHistory.length > 50) newHistory.shift();
+        if (newHistory.length > 100) newHistory.shift();
         return { history: newHistory, historyIndex: newHistory.length - 1 };
       };
 
       const setSaveStatus = (status: "saved" | "saving" | "unsaved") =>
         set({ saveStatus: status });
+
+      const triggerSave = () => {
+        set({ saveStatus: "unsaved" });
+        setTimeout(() => setSaveStatus("saved"), 800);
+      };
 
       return {
         project: INITIAL_PROJECT,
@@ -124,13 +136,39 @@ export const useFontStore = create<FontStore>()(
               updatedAt: Date.now(),
             },
             ...historyState,
-            saveStatus: "unsaved",
           });
-          setTimeout(() => setSaveStatus("saved"), 800);
+          triggerSave();
         },
 
+        uploadMultipleGlyphs: (entries) => {
+          const { project } = get();
+          const historyState = pushHistory(project.glyphs);
+          const updatedGlyphs = { ...project.glyphs };
+          for (const { codepoint, svgContent, fileName } of entries) {
+            if (updatedGlyphs[codepoint]) {
+              updatedGlyphs[codepoint] = {
+                ...updatedGlyphs[codepoint],
+                svgContent,
+                fileName,
+                uploadedAt: Date.now(),
+              };
+            }
+          }
+          set({
+            project: {
+              ...project,
+              glyphs: updatedGlyphs,
+              updatedAt: Date.now(),
+            },
+            ...historyState,
+          });
+          triggerSave();
+        },
+
+        // updateAdjustments now pushes to history so Ctrl+Z undoes slider changes
         updateAdjustments: (codepoint, adjustments) => {
           const { project } = get();
+          const historyState = pushHistory(project.glyphs);
           set({
             project: {
               ...project,
@@ -143,12 +181,36 @@ export const useFontStore = create<FontStore>()(
               },
               updatedAt: Date.now(),
             },
-            saveStatus: "unsaved",
+            ...historyState,
           });
-          setTimeout(() => setSaveStatus("saved"), 800);
+          triggerSave();
         },
 
         selectGlyph: (codepoint) => set({ selectedCodepoint: codepoint }),
+
+        clearAllGlyphs: () => {
+          const { project } = get();
+          const historyState = pushHistory(project.glyphs);
+          const clearedGlyphs: Record<string, GlyphData> = {};
+          for (const [cp, glyph] of Object.entries(project.glyphs)) {
+            clearedGlyphs[cp] = {
+              ...glyph,
+              svgContent: null,
+              fileName: null,
+              uploadedAt: null,
+              adjustments: { ...DEFAULT_ADJUSTMENTS },
+            };
+          }
+          set({
+            project: {
+              ...project,
+              glyphs: clearedGlyphs,
+              updatedAt: Date.now(),
+            },
+            ...historyState,
+          });
+          triggerSave();
+        },
 
         setFontName: (name) => {
           const { project } = get();
@@ -158,9 +220,8 @@ export const useFontStore = create<FontStore>()(
               metadata: { ...project.metadata, familyName: name },
               updatedAt: Date.now(),
             },
-            saveStatus: "unsaved",
           });
-          setTimeout(() => setSaveStatus("saved"), 800);
+          triggerSave();
         },
 
         updateMetrics: (patch) => {
@@ -171,9 +232,8 @@ export const useFontStore = create<FontStore>()(
               metrics: { ...project.metrics, ...patch },
               updatedAt: Date.now(),
             },
-            saveStatus: "unsaved",
           });
-          setTimeout(() => setSaveStatus("saved"), 800);
+          triggerSave();
         },
 
         updateMetadata: (patch) => {
@@ -184,9 +244,8 @@ export const useFontStore = create<FontStore>()(
               metadata: { ...project.metadata, ...patch },
               updatedAt: Date.now(),
             },
-            saveStatus: "unsaved",
           });
-          setTimeout(() => setSaveStatus("saved"), 800);
+          triggerSave();
         },
 
         toggleSpecialChars: () => {
@@ -236,13 +295,9 @@ export const useFontStore = create<FontStore>()(
         canRedo: () => get().historyIndex < get().history.length - 1,
 
         zoomIn: () =>
-          set((s) => ({
-            zoom: Math.min(2, Math.round((s.zoom + 0.25) * 100) / 100),
-          })),
+          set((s) => ({ zoom: Math.min(2, Math.round((s.zoom + 0.25) * 100) / 100) })),
         zoomOut: () =>
-          set((s) => ({
-            zoom: Math.max(0.5, Math.round((s.zoom - 0.25) * 100) / 100),
-          })),
+          set((s) => ({ zoom: Math.max(0.5, Math.round((s.zoom - 0.25) * 100) / 100) })),
         resetZoom: () => set({ zoom: 1 }),
 
         exportProject: () => {
@@ -255,6 +310,60 @@ export const useFontStore = create<FontStore>()(
           a.download = `${project.metadata.familyName.replace(/\s+/g, "-").toLowerCase()}.fontly`;
           a.click();
           URL.revokeObjectURL(url);
+        },
+
+        importProject: (jsonString) => {
+          try {
+            const imported = JSON.parse(jsonString) as FontProject;
+
+            // Basic validation
+            if (!imported.metadata || !imported.glyphs || !imported.metrics) {
+              return { success: false, error: "Invalid .fontly file — missing required fields." };
+            }
+
+            // Merge imported glyphs with the current full glyph map
+            // (in case character sets have changed between versions)
+            const currentGlyphs = buildInitialGlyphs();
+            const mergedGlyphs: Record<string, GlyphData> = { ...currentGlyphs };
+            for (const [cp, glyph] of Object.entries(imported.glyphs)) {
+              if (mergedGlyphs[cp] !== undefined) {
+                mergedGlyphs[cp] = {
+                  ...currentGlyphs[cp],
+                  ...glyph,
+                  adjustments: {
+                    ...DEFAULT_ADJUSTMENTS,
+                    ...(glyph.adjustments ?? {}),
+                  },
+                };
+              }
+            }
+
+            const restoredProject: FontProject = {
+              ...INITIAL_PROJECT,
+              ...imported,
+              glyphs: mergedGlyphs,
+              id: imported.id ?? crypto.randomUUID(),
+            };
+
+            set({
+              project: restoredProject,
+              history: [
+                {
+                  glyphs: JSON.parse(JSON.stringify(mergedGlyphs)),
+                  timestamp: Date.now(),
+                },
+              ],
+              historyIndex: 0,
+              saveStatus: "saved",
+            });
+
+            return { success: true };
+          } catch (err) {
+            return {
+              success: false,
+              error: err instanceof Error ? err.message : "Failed to parse project file.",
+            };
+          }
         },
       };
     },

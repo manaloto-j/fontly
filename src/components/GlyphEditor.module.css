@@ -21,7 +21,7 @@
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
-  gap: 12px;
+  gap: 10px;
 }
 
 .backBtn {
@@ -83,20 +83,51 @@
 }
 
 .dotGreen {
-  width: 6px;
-  height: 6px;
+  width: 6px; height: 6px;
   border-radius: 50%;
   background: #4caf7d;
   flex-shrink: 0;
 }
 .dotGray {
-  width: 6px;
-  height: 6px;
+  width: 6px; height: 6px;
   border-radius: 50%;
   background: var(--border-strong);
   flex-shrink: 0;
 }
 
+/* ── Local undo/redo buttons ── */
+.localUndoRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.localUndoBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  transition: background 0.12s, color 0.12s;
+  border-right: 1px solid var(--border);
+}
+.localUndoBtn:last-child { border-right: none; }
+.localUndoBtn:hover:not(:disabled) {
+  background: var(--highlight);
+  color: var(--text-primary);
+}
+.localUndoBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ── Nav buttons ── */
 .navButtons {
   display: flex;
   align-items: center;
@@ -153,7 +184,6 @@
   position: relative;
 }
 
-/* Subtle grid bg */
 .canvasArea::before {
   content: '';
   position: absolute;
@@ -215,29 +245,12 @@
   z-index: 10;
 }
 
-.baselineEmphasis {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: #f59e0b;
-  opacity: 0.0;
-  pointer-events: none;
-}
-
-/* ── SVG wrapper ── */
+/* ── SVG wrapper (uses native SVG transforms) ── */
 .svgWrapper {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   z-index: 5;
-}
-
-.svgWrapper :global(svg) {
-  max-width: 80%;
-  max-height: 80%;
+  overflow: hidden;
 }
 
 /* ── Empty canvas ── */
@@ -283,7 +296,6 @@
   color: var(--text-primary);
 }
 
-/* Replace button */
 .replaceBtn {
   position: absolute;
   bottom: 10px;
@@ -302,16 +314,13 @@
   z-index: 20;
   opacity: 0;
 }
-.canvas:hover .replaceBtn {
-  opacity: 1;
-}
+.canvas:hover .replaceBtn { opacity: 1; }
 .replaceBtn:hover {
   background: var(--highlight);
   border-color: var(--border-strong);
   color: var(--text-primary);
 }
 
-/* Canvas info bar */
 .canvasInfo {
   display: flex;
   align-items: center;
@@ -338,7 +347,6 @@
   overflow: hidden;
 }
 
-/* Tabs */
 .tabs {
   display: flex;
   border-bottom: 1px solid var(--border);
@@ -354,18 +362,13 @@
   background: transparent;
   border-bottom: 2px solid transparent;
   transition: color 0.12s, border-color 0.12s, background 0.12s;
-  letter-spacing: 0.01em;
 }
 
-.tab:hover { 
-  color: var(--text-primary); 
-  background: var(--highlight);
-}
+.tab:hover { color: var(--text-primary); background: var(--highlight); }
 
 .tabActive {
   color: var(--text-primary);
   border-bottom-color: var(--accent);
-  background: transparent;
 }
 
 .tabContent {
@@ -435,10 +438,7 @@
   transition: transform 0.1s;
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 }
-
-.slider::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
-}
+.slider::-webkit-slider-thumb:hover { transform: scale(1.2); }
 
 .numInput {
   width: 58px;
@@ -456,13 +456,8 @@
   flex-shrink: 0;
   transition: border-color 0.12s;
 }
+.numInput:focus { border-color: var(--accent); background: var(--surface); }
 
-.numInput:focus {
-  border-color: var(--accent);
-  background: var(--surface);
-}
-
-/* Flip buttons */
 .flipRow {
   display: flex;
   gap: 6px;
@@ -483,20 +478,9 @@
   border-radius: var(--radius-sm);
   transition: all 0.12s;
 }
+.flipBtn:hover { background: var(--highlight); border-color: var(--border-strong); color: var(--text-primary); }
+.flipBtnActive { background: var(--accent) !important; border-color: var(--accent) !important; color: white !important; }
 
-.flipBtn:hover {
-  background: var(--highlight);
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
-
-.flipBtnActive {
-  background: var(--accent) !important;
-  border-color: var(--accent) !important;
-  color: white !important;
-}
-
-/* Reset button */
 .resetBtn {
   font-size: 12px;
   color: var(--text-tertiary);
@@ -508,11 +492,7 @@
   transition: all 0.12s;
   margin-top: 2px;
 }
-.resetBtn:hover {
-  background: var(--highlight);
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-}
+.resetBtn:hover { background: var(--highlight); color: var(--text-primary); border-color: var(--border-strong); }
 
 /* ── Spacing tab ── */
 .infoBox {
@@ -532,20 +512,9 @@
   font-size: 12px;
   color: var(--text-secondary);
 }
+.infoRow strong { font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 
-.infoRow strong {
-  font-weight: 600;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Spacing visualizer */
-.spacingViz {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 2px;
-}
+.spacingViz { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
 
 .spacingTrack {
   height: 44px;
@@ -556,70 +525,18 @@
   overflow: hidden;
 }
 
-.spacingLSB {
-  background: rgba(74, 158, 255, 0.12);
-  border-right: 1px solid rgba(74, 158, 255, 0.3);
-  min-width: 4px;
-  flex-shrink: 0;
-}
-
-.spacingGlyph {
-  background: var(--highlight);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-  min-width: 32px;
-}
-
-.spacingGlyph span {
-  font-family: var(--font-serif);
-  font-size: 20px;
-  font-style: italic;
-  color: var(--text-primary);
-}
-
-.spacingRSB {
-  background: rgba(74, 158, 255, 0.12);
-  border-left: 1px solid rgba(74, 158, 255, 0.3);
-  min-width: 4px;
-}
-
-.spacingLabels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: var(--text-tertiary);
-  padding: 0 2px;
-}
+.spacingLSB { background: rgba(74, 158, 255, 0.12); border-right: 1px solid rgba(74, 158, 255, 0.3); min-width: 4px; flex-shrink: 0; }
+.spacingGlyph { background: var(--highlight); display: flex; align-items: center; justify-content: center; padding: 0 8px; min-width: 32px; }
+.spacingGlyph span { font-family: var(--font-serif); font-size: 20px; font-style: italic; color: var(--text-primary); }
+.spacingRSB { background: rgba(74, 158, 255, 0.12); border-left: 1px solid rgba(74, 158, 255, 0.3); min-width: 4px; }
+.spacingLabels { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-tertiary); padding: 0 2px; }
 
 /* ── Guides tab ── */
-.guidesNote {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  line-height: 1.5;
-  margin-bottom: 2px;
-}
+.guidesNote { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; margin-bottom: 2px; }
 
-.guideToggleRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-}
-
-.guideColorDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.guideName {
-  flex: 1;
-  font-size: 12.5px;
-  color: var(--text-primary);
-}
+.guideToggleRow { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.guideColorDot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.guideName { flex: 1; font-size: 12.5px; color: var(--text-primary); }
 
 .toggleSmall {
   position: relative;
@@ -630,30 +547,17 @@
   transition: background 0.18s;
   flex-shrink: 0;
 }
-
-.toggleSmallOn {
-  background: var(--accent);
-}
-
+.toggleSmallOn { background: var(--accent); }
 .toggleSmallThumb {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 12px;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
   background: white;
   border-radius: 50%;
   transition: transform 0.18s;
   display: block;
   pointer-events: none;
 }
+.toggleSmallOn .toggleSmallThumb { transform: translateX(12px); }
 
-.toggleSmallOn .toggleSmallThumb {
-  transform: translateX(12px);
-}
-
-.guideDivider {
-  height: 1px;
-  background: var(--border);
-  margin: 2px 0;
-}
+.guideDivider { height: 1px; background: var(--border); margin: 2px 0; }
