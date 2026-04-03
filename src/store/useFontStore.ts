@@ -1,295 +1,249 @@
-import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import {
   FontProject,
   GlyphData,
   GlyphAdjustments,
-  FontMetrics,
-  FontMetadata,
   HistoryEntry,
+  DEFAULT_ADJUSTMENTS,
   DEFAULT_METRICS,
   DEFAULT_METADATA,
-  makeGlyph,
-} from '../types/font'
-import { ALL_CHARACTERS, toCodepoint } from '../constants/charsets'
+} from "../types/font";
+import { CHAR_GROUPS, toCodepoint } from "../constants/charsets";
 
-// ── Initial project factory ───────────────────────────────────────────────────
-
-function createDefaultProject(): FontProject {
-  const glyphs: Record<string, GlyphData> = {}
-  for (const char of ALL_CHARACTERS) {
-    const glyph = makeGlyph(char)
-    glyphs[glyph.codepoint] = glyph
+// ── Build initial glyph map from all character groups ──────────────────────────
+function buildInitialGlyphs(): Record<string, GlyphData> {
+  const glyphs: Record<string, GlyphData> = {};
+  for (const group of CHAR_GROUPS) {
+    for (const ch of group.characters) {
+      const cp = toCodepoint(ch);
+      glyphs[cp] = {
+        codepoint: cp,
+        svgContent: null,
+        fileName: null,
+        adjustments: { ...DEFAULT_ADJUSTMENTS },
+        uploadedAt: null,
+      };
+    }
   }
-  return {
-    id: crypto.randomUUID(),
-    metadata: { ...DEFAULT_METADATA },
-    metrics: { ...DEFAULT_METRICS },
-    glyphs,
-    specialCharsEnabled: false,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  }
+  return glyphs;
 }
 
-// ── Store shape ───────────────────────────────────────────────────────────────
+const INITIAL_PROJECT: FontProject = {
+  id: crypto.randomUUID(),
+  metadata: { ...DEFAULT_METADATA },
+  metrics: { ...DEFAULT_METRICS },
+  glyphs: buildInitialGlyphs(),
+  specialCharsEnabled: false,
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+};
 
+// ── Store interface ────────────────────────────────────────────────────────────
 interface FontStore {
-  project: FontProject
-  past: HistoryEntry[]
-  future: HistoryEntry[]
-  zoom: number          // 0.5 – 2.0
-  saveStatus: 'saved' | 'saving' | 'unsaved'
-  selectedGlyph: string | null  // codepoint
-
-  // Project actions
-  setFontName: (name: string) => void
-  setMetrics: (metrics: Partial<FontMetrics>) => void
-  setMetadata: (metadata: Partial<FontMetadata>) => void
-  toggleSpecialChars: () => void
-  newProject: () => void
-  importProject: (json: string) => void
-  exportProject: () => void
+  project: FontProject;
+  history: HistoryEntry[];
+  historyIndex: number;
+  zoom: number;
+  saveStatus: "saved" | "saving" | "unsaved";
+  selectedCodepoint: string | null;
 
   // Glyph actions
-  uploadGlyph: (codepoint: string, svgContent: string, fileName: string) => void
-  removeGlyph: (codepoint: string) => void
-  updateAdjustments: (codepoint: string, adj: Partial<GlyphAdjustments>) => void
-  selectGlyph: (codepoint: string | null) => void
+  uploadGlyph: (
+    codepoint: string,
+    svgContent: string,
+    fileName: string,
+  ) => void;
+  updateAdjustments: (codepoint: string, adjustments: GlyphAdjustments) => void;
+  selectGlyph: (codepoint: string) => void;
 
-  // Undo / redo
-  undo: () => void
-  redo: () => void
-  canUndo: () => boolean
-  canRedo: () => boolean
+  // Font metadata
+  setFontName: (name: string) => void;
+
+  // Special chars
+  toggleSpecialChars: () => void;
+
+  // Undo/redo
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
 
   // Zoom
-  setZoom: (zoom: number) => void
-  zoomIn: () => void
-  zoomOut: () => void
-  resetZoom: () => void
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetZoom: () => void;
+
+  // Export
+  exportProject: () => void;
 }
 
-// ── History helpers ───────────────────────────────────────────────────────────
-
-const MAX_HISTORY = 50
-
-function snapshot(project: FontProject): HistoryEntry {
-  return {
-    glyphs: structuredClone(project.glyphs),
-    metrics: { ...project.metrics },
-    metadata: { ...project.metadata },
-  }
-}
-
-// ── Store ─────────────────────────────────────────────────────────────────────
-
+// ── Store ──────────────────────────────────────────────────────────────────────
 export const useFontStore = create<FontStore>()(
   persist(
-    (set, get) => ({
-      project: createDefaultProject(),
-      past: [],
-      future: [],
-      zoom: 1,
-      saveStatus: 'saved',
-      selectedGlyph: null,
+    (set, get) => {
+      // Save a history snapshot before a destructive change
+      const pushHistory = (glyphs: Record<string, GlyphData>) => {
+        const { history, historyIndex } = get();
+        // Truncate future history if we're in the middle
+        const newHistory = history.slice(0, historyIndex + 1);
+        newHistory.push({
+          glyphs: JSON.parse(JSON.stringify(glyphs)),
+          timestamp: Date.now(),
+        });
+        // Keep max 50 entries
+        if (newHistory.length > 50) newHistory.shift();
+        return { history: newHistory, historyIndex: newHistory.length - 1 };
+      };
 
-      // ── Project ──────────────────────────────────────────────────────────
+      const setSaveStatus = (status: "saved" | "saving" | "unsaved") =>
+        set({ saveStatus: status });
 
-      setFontName: (name) => set((s) => ({
-        project: { ...s.project, metadata: { ...s.project.metadata, familyName: name }, updatedAt: Date.now() },
-        saveStatus: 'saved',
-      })),
-
-      setMetrics: (metrics) => set((s) => ({
-        project: { ...s.project, metrics: { ...s.project.metrics, ...metrics }, updatedAt: Date.now() },
-        saveStatus: 'saved',
-      })),
-
-      setMetadata: (metadata) => set((s) => ({
-        project: { ...s.project, metadata: { ...s.project.metadata, ...metadata }, updatedAt: Date.now() },
-        saveStatus: 'saved',
-      })),
-
-      toggleSpecialChars: () => set((s) => ({
-        project: { ...s.project, specialCharsEnabled: !s.project.specialCharsEnabled, updatedAt: Date.now() },
-      })),
-
-      newProject: () => set({
-        project: createDefaultProject(),
-        past: [],
-        future: [],
+      return {
+        project: INITIAL_PROJECT,
+        history: [
+          {
+            glyphs: JSON.parse(JSON.stringify(INITIAL_PROJECT.glyphs)),
+            timestamp: Date.now(),
+          },
+        ],
+        historyIndex: 0,
         zoom: 1,
-        selectedGlyph: null,
-        saveStatus: 'saved',
-      }),
+        saveStatus: "saved",
+        selectedCodepoint: null,
 
-      importProject: (json) => {
-        try {
-          const project = JSON.parse(json) as FontProject
-          set({ project, past: [], future: [], selectedGlyph: null, saveStatus: 'saved' })
-        } catch {
-          console.error('Invalid .fontly file')
-        }
-      },
-
-      exportProject: () => {
-        const { project } = get()
-        const json = JSON.stringify(project, null, 2)
-        const blob = new Blob([json], { type: 'application/json' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `${project.metadata.familyName.replace(/\s+/g, '-')}.fontly`
-        a.click()
-        URL.revokeObjectURL(url)
-      },
-
-      // ── Glyphs ───────────────────────────────────────────────────────────
-
-      uploadGlyph: (codepoint, svgContent, fileName) => {
-        const { project, past } = get()
-        const entry = snapshot(project)
-        const newPast = [...past.slice(-MAX_HISTORY + 1), entry]
-        set((s) => ({
-          past: newPast,
-          future: [],
-          project: {
-            ...s.project,
-            updatedAt: Date.now(),
-            glyphs: {
-              ...s.project.glyphs,
-              [codepoint]: {
-                ...s.project.glyphs[codepoint],
-                svgContent,
-                svgFileName: fileName,
-                uploadedAt: Date.now(),
+        uploadGlyph: (codepoint, svgContent, fileName) => {
+          const { project } = get();
+          const historyState = pushHistory(project.glyphs);
+          set({
+            project: {
+              ...project,
+              glyphs: {
+                ...project.glyphs,
+                [codepoint]: {
+                  ...project.glyphs[codepoint],
+                  svgContent,
+                  fileName,
+                  uploadedAt: Date.now(),
+                },
               },
+              updatedAt: Date.now(),
             },
-          },
-          saveStatus: 'saved',
-        }))
-      },
+            ...historyState,
+            saveStatus: "unsaved",
+          });
+          // Debounced "saved" status
+          setTimeout(() => setSaveStatus("saved"), 800);
+        },
 
-      removeGlyph: (codepoint) => {
-        const { project, past } = get()
-        const entry = snapshot(project)
-        const newPast = [...past.slice(-MAX_HISTORY + 1), entry]
-        set((s) => ({
-          past: newPast,
-          future: [],
-          project: {
-            ...s.project,
-            updatedAt: Date.now(),
-            glyphs: {
-              ...s.project.glyphs,
-              [codepoint]: {
-                ...s.project.glyphs[codepoint],
-                svgContent: null,
-                svgFileName: null,
-                uploadedAt: null,
+        updateAdjustments: (codepoint, adjustments) => {
+          const { project } = get();
+          set({
+            project: {
+              ...project,
+              glyphs: {
+                ...project.glyphs,
+                [codepoint]: {
+                  ...project.glyphs[codepoint],
+                  adjustments,
+                },
               },
+              updatedAt: Date.now(),
             },
-          },
-          saveStatus: 'saved',
-        }))
-      },
+            saveStatus: "unsaved",
+          });
+          setTimeout(() => setSaveStatus("saved"), 800);
+        },
 
-      updateAdjustments: (codepoint, adj) => {
-        set((s) => ({
-          project: {
-            ...s.project,
-            updatedAt: Date.now(),
-            glyphs: {
-              ...s.project.glyphs,
-              [codepoint]: {
-                ...s.project.glyphs[codepoint],
-                adjustments: { ...s.project.glyphs[codepoint].adjustments, ...adj },
-              },
+        selectGlyph: (codepoint) => set({ selectedCodepoint: codepoint }),
+
+        setFontName: (name) => {
+          const { project } = get();
+          set({
+            project: {
+              ...project,
+              metadata: { ...project.metadata, familyName: name },
+              updatedAt: Date.now(),
             },
-          },
-          saveStatus: 'saved',
-        }))
-      },
+            saveStatus: "unsaved",
+          });
+          setTimeout(() => setSaveStatus("saved"), 800);
+        },
 
-      selectGlyph: (codepoint) => set({ selectedGlyph: codepoint }),
+        toggleSpecialChars: () => {
+          const { project } = get();
+          set({
+            project: {
+              ...project,
+              specialCharsEnabled: !project.specialCharsEnabled,
+              updatedAt: Date.now(),
+            },
+          });
+        },
 
-      // ── Undo / redo ──────────────────────────────────────────────────────
+        undo: () => {
+          const { history, historyIndex, project } = get();
+          if (historyIndex <= 0) return;
+          const newIndex = historyIndex - 1;
+          const snapshot = history[newIndex];
+          set({
+            historyIndex: newIndex,
+            project: {
+              ...project,
+              glyphs: JSON.parse(JSON.stringify(snapshot.glyphs)),
+              updatedAt: Date.now(),
+            },
+            saveStatus: "unsaved",
+          });
+        },
 
-      undo: () => {
-        const { past, project, future } = get()
-        if (past.length === 0) return
-        const prev = past[past.length - 1]
-        const newPast = past.slice(0, -1)
-        const entry = snapshot(project)
-        set({
-          past: newPast,
-          future: [entry, ...future.slice(0, MAX_HISTORY - 1)],
-          project: {
-            ...project,
-            glyphs: prev.glyphs,
-            metrics: prev.metrics,
-            metadata: prev.metadata,
-            updatedAt: Date.now(),
-          },
-          saveStatus: 'saved',
-        })
-      },
+        redo: () => {
+          const { history, historyIndex, project } = get();
+          if (historyIndex >= history.length - 1) return;
+          const newIndex = historyIndex + 1;
+          const snapshot = history[newIndex];
+          set({
+            historyIndex: newIndex,
+            project: {
+              ...project,
+              glyphs: JSON.parse(JSON.stringify(snapshot.glyphs)),
+              updatedAt: Date.now(),
+            },
+            saveStatus: "unsaved",
+          });
+        },
 
-      redo: () => {
-        const { past, project, future } = get()
-        if (future.length === 0) return
-        const next = future[0]
-        const entry = snapshot(project)
-        set({
-          past: [...past.slice(-MAX_HISTORY + 1), entry],
-          future: future.slice(1),
-          project: {
-            ...project,
-            glyphs: next.glyphs,
-            metrics: next.metrics,
-            metadata: next.metadata,
-            updatedAt: Date.now(),
-          },
-          saveStatus: 'saved',
-        })
-      },
+        canUndo: () => get().historyIndex > 0,
+        canRedo: () => get().historyIndex < get().history.length - 1,
 
-      canUndo: () => get().past.length > 0,
-      canRedo: () => get().future.length > 0,
+        zoomIn: () =>
+          set((s) => ({
+            zoom: Math.min(2, Math.round((s.zoom + 0.25) * 100) / 100),
+          })),
+        zoomOut: () =>
+          set((s) => ({
+            zoom: Math.max(0.5, Math.round((s.zoom - 0.25) * 100) / 100),
+          })),
+        resetZoom: () => set({ zoom: 1 }),
 
-      // ── Zoom ─────────────────────────────────────────────────────────────
-
-      setZoom: (zoom) => set({ zoom: Math.min(2, Math.max(0.5, zoom)) }),
-      zoomIn: () => set((s) => ({ zoom: Math.min(2, parseFloat((s.zoom + 0.25).toFixed(2))) })),
-      zoomOut: () => set((s) => ({ zoom: Math.max(0.5, parseFloat((s.zoom - 0.25).toFixed(2))) })),
-      resetZoom: () => set({ zoom: 1 }),
-    }),
+        exportProject: () => {
+          const { project } = get();
+          const json = JSON.stringify(project, null, 2);
+          const blob = new Blob([json], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${project.metadata.familyName.replace(/\s+/g, "-").toLowerCase()}.fontly`;
+          a.click();
+          URL.revokeObjectURL(url);
+        },
+      };
+    },
     {
-      name: 'fontly-project',
-      partialize: (s) => ({ project: s.project, zoom: s.zoom }),
-    }
-  )
-)
-
-// ── Selector helpers (use these in components) ────────────────────────────────
-
-export const selectProject = (s: FontStore) => s.project
-export const selectGlyph = (codepoint: string) => (s: FontStore) =>
-  s.project.glyphs[codepoint]
-export const selectUploadedCount = (s: FontStore) =>
-  Object.values(s.project.glyphs).filter(g => g.svgContent !== null).length
-export const selectTotalCount = (s: FontStore) => {
-  const { project } = s
-  if (project.specialCharsEnabled) return Object.keys(project.glyphs).length
-  // count only non-special glyphs
-  let count = 0
-  for (const g of Object.values(project.glyphs)) {
-    const cp = g.character.codePointAt(0)!
-    if (cp < 0xC0) count++ // rough cut: basic latin + punctuation
-  }
-  return count
-}
-
-// Re-export toCodepoint for convenience
-export { toCodepoint }
+      name: "fontly-project",
+      storage: createJSONStorage(() => localStorage),
+      // Only persist the project, not history/zoom
+      partialize: (state) => ({ project: state.project }),
+    },
+  ),
+);

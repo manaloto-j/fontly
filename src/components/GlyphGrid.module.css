@@ -38,7 +38,10 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    background 0.15s;
   outline: none;
 }
 
@@ -115,6 +118,29 @@
   object-fit: contain;
 }
 
+/* Edit overlay for filled cells */
+.editOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: white;
+  background: rgba(20, 20, 18, 0.65);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 3;
+  border-radius: calc(var(--radius-md) - 1px);
+}
+
+.cell:hover .editOverlay {
+  opacity: 1;
+}
+
 /* Codepoint label */
 .cpLabel {
   position: absolute;
@@ -129,9 +155,15 @@
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.15s;
+  z-index: 4;
 }
 
 .cell:hover .cpLabel,
 .cellActive .cpLabel {
   opacity: 1;
+}
+
+/* Hide cp label when edit overlay is shown */
+.cellFilled:hover .cpLabel {
+  opacity: 0;
 }
