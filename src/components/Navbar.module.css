@@ -114,6 +114,38 @@
   flex-shrink: 0;
 }
 
+/* View switcher */
+.viewSwitcher {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.viewBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--surface);
+  padding: 0 10px;
+  height: 28px;
+  transition: background 0.12s, color 0.12s;
+  border-right: 1px solid var(--border);
+}
+.viewBtn:last-child { border-right: none; }
+.viewBtn:hover {
+  background: var(--highlight);
+  color: var(--text-primary);
+}
+.viewBtnActive {
+  background: var(--accent) !important;
+  color: white !important;
+}
+
 .btnGroup {
   display: flex;
   align-items: center;
