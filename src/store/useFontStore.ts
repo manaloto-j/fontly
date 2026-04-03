@@ -4,6 +4,8 @@ import {
   FontProject,
   GlyphData,
   GlyphAdjustments,
+  FontMetrics,
+  FontMetadata,
   HistoryEntry,
   DEFAULT_ADJUSTMENTS,
   DEFAULT_METRICS,
@@ -11,7 +13,6 @@ import {
 } from "../types/font";
 import { CHAR_GROUPS, toCodepoint } from "../constants/charsets";
 
-// ── Build initial glyph map from all character groups ──────────────────────────
 function buildInitialGlyphs(): Record<string, GlyphData> {
   const glyphs: Record<string, GlyphData> = {};
   for (const group of CHAR_GROUPS) {
@@ -39,7 +40,6 @@ const INITIAL_PROJECT: FontProject = {
   updatedAt: Date.now(),
 };
 
-// ── Store interface ────────────────────────────────────────────────────────────
 interface FontStore {
   project: FontProject;
   history: HistoryEntry[];
@@ -49,16 +49,14 @@ interface FontStore {
   selectedCodepoint: string | null;
 
   // Glyph actions
-  uploadGlyph: (
-    codepoint: string,
-    svgContent: string,
-    fileName: string,
-  ) => void;
+  uploadGlyph: (codepoint: string, svgContent: string, fileName: string) => void;
   updateAdjustments: (codepoint: string, adjustments: GlyphAdjustments) => void;
   selectGlyph: (codepoint: string) => void;
 
-  // Font metadata
+  // Font metadata & metrics
   setFontName: (name: string) => void;
+  updateMetrics: (patch: Partial<FontMetrics>) => void;
+  updateMetadata: (patch: Partial<FontMetadata>) => void;
 
   // Special chars
   toggleSpecialChars: () => void;
@@ -74,24 +72,20 @@ interface FontStore {
   zoomOut: () => void;
   resetZoom: () => void;
 
-  // Export
+  // Export (legacy .fontly JSON project file)
   exportProject: () => void;
 }
 
-// ── Store ──────────────────────────────────────────────────────────────────────
 export const useFontStore = create<FontStore>()(
   persist(
     (set, get) => {
-      // Save a history snapshot before a destructive change
       const pushHistory = (glyphs: Record<string, GlyphData>) => {
         const { history, historyIndex } = get();
-        // Truncate future history if we're in the middle
         const newHistory = history.slice(0, historyIndex + 1);
         newHistory.push({
           glyphs: JSON.parse(JSON.stringify(glyphs)),
           timestamp: Date.now(),
         });
-        // Keep max 50 entries
         if (newHistory.length > 50) newHistory.shift();
         return { history: newHistory, historyIndex: newHistory.length - 1 };
       };
@@ -132,7 +126,6 @@ export const useFontStore = create<FontStore>()(
             ...historyState,
             saveStatus: "unsaved",
           });
-          // Debounced "saved" status
           setTimeout(() => setSaveStatus("saved"), 800);
         },
 
@@ -163,6 +156,32 @@ export const useFontStore = create<FontStore>()(
             project: {
               ...project,
               metadata: { ...project.metadata, familyName: name },
+              updatedAt: Date.now(),
+            },
+            saveStatus: "unsaved",
+          });
+          setTimeout(() => setSaveStatus("saved"), 800);
+        },
+
+        updateMetrics: (patch) => {
+          const { project } = get();
+          set({
+            project: {
+              ...project,
+              metrics: { ...project.metrics, ...patch },
+              updatedAt: Date.now(),
+            },
+            saveStatus: "unsaved",
+          });
+          setTimeout(() => setSaveStatus("saved"), 800);
+        },
+
+        updateMetadata: (patch) => {
+          const { project } = get();
+          set({
+            project: {
+              ...project,
+              metadata: { ...project.metadata, ...patch },
               updatedAt: Date.now(),
             },
             saveStatus: "unsaved",
@@ -242,7 +261,6 @@ export const useFontStore = create<FontStore>()(
     {
       name: "fontly-project",
       storage: createJSONStorage(() => localStorage),
-      // Only persist the project, not history/zoom
       partialize: (state) => ({ project: state.project }),
     },
   ),

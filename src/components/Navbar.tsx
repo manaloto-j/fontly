@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { useFontStore } from '../store/useFontStore'
+import FontPanel from './FontPanel'
 import styles from './Navbar.module.css'
 
 interface NavbarProps {
@@ -14,7 +15,7 @@ export default function Navbar({ onBack, onPreview, isPreview }: NavbarProps) {
   const zoom = useFontStore(s => s.zoom)
   const canUndo = useFontStore(s => s.canUndo())
   const canRedo = useFontStore(s => s.canRedo())
-  const { setFontName, undo, redo, zoomIn, zoomOut, resetZoom, exportProject } = useFontStore()
+  const { setFontName, undo, redo, zoomIn, zoomOut, resetZoom } = useFontStore()
 
   const [editingName, setEditingName] = useState(false)
   const [nameValue, setNameValue] = useState(familyName)
@@ -40,7 +41,7 @@ export default function Navbar({ onBack, onPreview, isPreview }: NavbarProps) {
 
   return (
     <header className={styles.navbar}>
-      {/* Left — logo + back */}
+      {/* Left — logo + back + name */}
       <div className={styles.left}>
         <button className={styles.backBtn} onClick={onBack} title="Back to home">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -159,14 +160,23 @@ export default function Navbar({ onBack, onPreview, isPreview }: NavbarProps) {
         )}
       </div>
 
-      {/* Right — export */}
+      {/* Right — Font settings panel + Save project */}
       <div className={styles.right}>
-        <button className={styles.exportBtn} onClick={exportProject} title="Export .fontly project file">
+        {/* Font settings / export panel */}
+        <FontPanel />
+
+        {/* Save .fontly project file */}
+        <button
+          className={styles.saveBtn}
+          onClick={() => useFontStore.getState().exportProject()}
+          title="Save .fontly project file"
+        >
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-            <path d="M6.5 1v8M3 6l3.5 3.5L10 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M1 10h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            <path d="M2 2h7l2 2v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+            <path d="M4 2v3h5V2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M3 7h7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
           </svg>
-          Export font
+          Save project
         </button>
       </div>
     </header>
