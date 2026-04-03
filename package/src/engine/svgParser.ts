@@ -1,0 +1,456 @@
+/**
+ * SVG Parser + Coordinate Transform Engine
+ * Pure TypeScript — zero React, zero DOM dependencies (except DOMParser for SVG parsing)
+ *
+ * Responsibilities:
+ *  1. Parse SVG string into a list of path data strings
+ *  2. Detect strokes (warn if present)
+ *  3. Flatten all transforms on path elements
+ *  4. Convert SVG coordinate space → font coordinate space
+ *     SVG: top-left origin, Y down
+ *     Font: bottom-left origin, Y up, scaled to UPM
+ */
+
+export interface ParsedGlyph {
+  paths: string[]          // cleaned path data strings in font coordinate space
+  hasStrokes: boolean      // true if any path/shape has a stroke attribute
+  strokeWarning?: string   // human-readable warning message
+  svgWidth: number
+  svgHeight: number
+  viewBox: { x: number; y: number; w: number; h: number }
+}
+
+export interface TransformMatrix {
+  a: number; b: number; c: number
+  d: number; e: number; f: number
+}
+
+const IDENTITY: TransformMatrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+
+// ── Matrix helpers ────────────────────────────────────────────────────────────
+
+function multiplyMatrix(m1: TransformMatrix, m2: TransformMatrix): TransformMatrix {
+  return {
+    a: m1.a * m2.a + m1.c * m2.b,
+    b: m1.b * m2.a + m1.d * m2.b,
+    c: m1.a * m2.c + m1.c * m2.d,
+    d: m1.b * m2.c + m1.d * m2.d,
+    e: m1.a * m2.e + m1.c * m2.f + m1.e,
+    f: m1.b * m2.e + m1.d * m2.f + m1.f,
+  }
+}
+
+function applyMatrix(m: TransformMatrix, x: number, y: number): [number, number] {
+  return [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f]
+}
+
+// ── Transform attribute parser ────────────────────────────────────────────────
+
+export function parseTransformAttr(transform: string): TransformMatrix {
+  let result = { ...IDENTITY }
+  if (!transform) return result
+
+  const re = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]+)\)/g
+  let match: RegExpExecArray | null
+
+  while ((match = re.exec(transform)) !== null) {
+    const type = match[1]
+    const args = match[2].trim().split(/[\s,]+/).map(Number)
+    let m: TransformMatrix = { ...IDENTITY }
+
+    switch (type) {
+      case 'matrix':
+        m = { a: args[0], b: args[1], c: args[2], d: args[3], e: args[4], f: args[5] }
+        break
+      case 'translate':
+        m = { ...IDENTITY, e: args[0], f: args[1] ?? 0 }
+        break
+      case 'scale': {
+        const sx = args[0], sy = args[1] ?? args[0]
+        m = { ...IDENTITY, a: sx, d: sy }
+        break
+      }
+      case 'rotate': {
+        const ang = (args[0] * Math.PI) / 180
+        const cx = args[1] ?? 0, cy = args[2] ?? 0
+        const cos = Math.cos(ang), sin = Math.sin(ang)
+        m = {
+          a: cos, b: sin, c: -sin, d: cos,
+          e: cx - cos * cx + sin * cy,
+          f: cy - sin * cx - cos * cy,
+        }
+        break
+      }
+      case 'skewX': {
+        const t = Math.tan((args[0] * Math.PI) / 180)
+        m = { ...IDENTITY, c: t }
+        break
+      }
+      case 'skewY': {
+        const t = Math.tan((args[0] * Math.PI) / 180)
+        m = { ...IDENTITY, b: t }
+        break
+      }
+    }
+    result = multiplyMatrix(result, m)
+  }
+  return result
+}
+
+// ── Stroke detection ──────────────────────────────────────────────────────────
+
+function elementHasStroke(el: Element): boolean {
+  const stroke = el.getAttribute('stroke')
+  const strokeWidth = el.getAttribute('stroke-width')
+  const style = el.getAttribute('style') || ''
+
+  if (stroke && stroke !== 'none') return true
+  if (strokeWidth && parseFloat(strokeWidth) > 0) {
+    // Only a problem if stroke is not explicitly none
+    if (stroke !== 'none' && !style.includes('stroke: none') && !style.includes('stroke:none')) {
+      return true
+    }
+  }
+  if (style.includes('stroke') && !style.includes('stroke: none') && !style.includes('stroke:none')) {
+    const match = style.match(/stroke\s*:\s*([^;]+)/)
+    if (match && match[1].trim() !== 'none') return true
+  }
+  return false
+}
+
+// ── Path data transformer ─────────────────────────────────────────────────────
+// Takes a path `d` string + transform matrix and returns transformed path `d`
+
+export function transformPathData(
+  d: string,
+  matrix: TransformMatrix,
+  svgHeight: number,
+  viewBox: { x: number; y: number; w: number; h: number },
+  upm: number,
+  ascender: number,
+): string {
+  // Scale factor: map SVG viewBox height → font UPM
+  const scaleX = upm / viewBox.w
+  const scaleY = upm / viewBox.h
+
+  // Transform a point: apply matrix, then SVG→font coordinate flip
+  const transformPoint = (x: number, y: number): [number, number] => {
+    // 1. Apply SVG transform matrix
+    const [mx, my] = applyMatrix(matrix, x, y)
+    // 2. Translate by viewBox origin
+    const vx = mx - viewBox.x
+    const vy = my - viewBox.y
+    // 3. Scale to UPM
+    const fx = vx * scaleX
+    // 4. Flip Y: SVG Y-down → font Y-up, offset by ascender so baseline sits correctly
+    const fy = ascender - vy * scaleY
+    return [fx, fy]
+  }
+
+  // Tokenize the path
+  const tokens = d.match(/[MmLlHhVvCcSsQqTtAaZz]|[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?/g) ?? []
+
+  let result = ''
+  let i = 0
+  let cx = 0, cy = 0   // current point
+  let startX = 0, startY = 0  // subpath start
+
+  const num = () => parseFloat(tokens[i++])
+
+  while (i < tokens.length) {
+    const cmd = tokens[i++]
+
+    switch (cmd) {
+      case 'M': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          cx = num(); cy = num()
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx.toFixed(3)},${fy.toFixed(3)}`)
+          startX = cx; startY = cy
+        }
+        result += `M ${args.join(' ')} `
+        break
+      }
+      case 'm': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          cx += num(); cy += num()
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx.toFixed(3)},${fy.toFixed(3)}`)
+          startX = cx; startY = cy
+        }
+        result += `M ${args.join(' ')} `
+        break
+      }
+      case 'L': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          cx = num(); cy = num()
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `L ${args.join(' ')} `
+        break
+      }
+      case 'l': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          cx += num(); cy += num()
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `L ${args.join(' ')} `
+        break
+      }
+      case 'H': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          cx = num()
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `L ${args.join(' ')} `
+        break
+      }
+      case 'h': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          cx += num()
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `L ${args.join(' ')} `
+        break
+      }
+      case 'V': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          cy = num()
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `L ${args.join(' ')} `
+        break
+      }
+      case 'v': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          cy += num()
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `L ${args.join(' ')} `
+        break
+      }
+      case 'C': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          const x1 = num(), y1 = num()
+          const x2 = num(), y2 = num()
+          cx = num(); cy = num()
+          const [fx1, fy1] = transformPoint(x1, y1)
+          const [fx2, fy2] = transformPoint(x2, y2)
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx1.toFixed(3)},${fy1.toFixed(3)} ${fx2.toFixed(3)},${fy2.toFixed(3)} ${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `C ${args.join(' ')} `
+        break
+      }
+      case 'c': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          const x1 = cx + num(), y1 = cy + num()
+          const x2 = cx + num(), y2 = cy + num()
+          cx += num(); cy += num()
+          const [fx1, fy1] = transformPoint(x1, y1)
+          const [fx2, fy2] = transformPoint(x2, y2)
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx1.toFixed(3)},${fy1.toFixed(3)} ${fx2.toFixed(3)},${fy2.toFixed(3)} ${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `C ${args.join(' ')} `
+        break
+      }
+      case 'S': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          const x2 = num(), y2 = num()
+          cx = num(); cy = num()
+          const [fx2, fy2] = transformPoint(x2, y2)
+          const [fx, fy] = transformPoint(cx, cy)
+          // Reflect last control point — we approximate as smooth cubic
+          args.push(`${fx2.toFixed(3)},${fy2.toFixed(3)} ${fx2.toFixed(3)},${fy2.toFixed(3)} ${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `C ${args.join(' ')} `
+        break
+      }
+      case 's': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          const x2 = cx + num(), y2 = cy + num()
+          cx += num(); cy += num()
+          const [fx2, fy2] = transformPoint(x2, y2)
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fx2.toFixed(3)},${fy2.toFixed(3)} ${fx2.toFixed(3)},${fy2.toFixed(3)} ${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `C ${args.join(' ')} `
+        break
+      }
+      case 'Q': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          const qx1 = num(), qy1 = num()
+          cx = num(); cy = num()
+          // Elevate quadratic to cubic
+          const [fqx1, fqy1] = transformPoint(qx1, qy1)
+          const [fx, fy] = transformPoint(cx, cy)
+          // Get current point transformed
+          // cubic P1 = current + 2/3*(Q1-current), P2 = end + 2/3*(Q1-end)
+          args.push(`${fqx1.toFixed(3)},${fqy1.toFixed(3)} ${fqx1.toFixed(3)},${fqy1.toFixed(3)} ${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `C ${args.join(' ')} `
+        break
+      }
+      case 'q': {
+        const args: string[] = []
+        while (i < tokens.length && !/[A-Za-z]/.test(tokens[i])) {
+          const qx1 = cx + num(), qy1 = cy + num()
+          cx += num(); cy += num()
+          const [fqx1, fqy1] = transformPoint(qx1, qy1)
+          const [fx, fy] = transformPoint(cx, cy)
+          args.push(`${fqx1.toFixed(3)},${fqy1.toFixed(3)} ${fqx1.toFixed(3)},${fqy1.toFixed(3)} ${fx.toFixed(3)},${fy.toFixed(3)}`)
+        }
+        result += `C ${args.join(' ')} `
+        break
+      }
+      case 'Z':
+      case 'z':
+        cx = startX; cy = startY
+        result += 'Z '
+        break
+      default:
+        // Unknown command — skip
+        break
+    }
+  }
+
+  return result.trim()
+}
+
+// ── Main parser ───────────────────────────────────────────────────────────────
+
+export function parseSVGGlyph(
+  svgString: string,
+  upm: number,
+  ascender: number,
+): ParsedGlyph {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(svgString, 'image/svg+xml')
+  const svg = doc.querySelector('svg')
+
+  if (!svg) {
+    return { paths: [], hasStrokes: false, svgWidth: 0, svgHeight: 0, viewBox: { x: 0, y: 0, w: upm, h: upm } }
+  }
+
+  // Parse viewBox
+  let viewBox = { x: 0, y: 0, w: upm, h: upm }
+  const vbAttr = svg.getAttribute('viewBox')
+  if (vbAttr) {
+    const parts = vbAttr.trim().split(/[\s,]+/).map(Number)
+    if (parts.length === 4) {
+      viewBox = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] }
+    }
+  }
+
+  const svgWidth = parseFloat(svg.getAttribute('width') ?? String(viewBox.w)) || viewBox.w
+  const svgHeight = parseFloat(svg.getAttribute('height') ?? String(viewBox.h)) || viewBox.h
+  if (!vbAttr) {
+    viewBox.w = svgWidth
+    viewBox.h = svgHeight
+  }
+
+  let hasStrokes = false
+  const paths: string[] = []
+
+  // Collect all path-like elements with their accumulated transforms
+  const collectPaths = (el: Element, parentMatrix: TransformMatrix) => {
+    const transformAttr = el.getAttribute('transform') ?? ''
+    const localMatrix = parseTransformAttr(transformAttr)
+    const matrix = multiplyMatrix(parentMatrix, localMatrix)
+
+    if (elementHasStroke(el)) hasStrokes = true
+
+    const tagName = el.tagName.toLowerCase()
+
+    if (tagName === 'path') {
+      const d = el.getAttribute('d')
+      if (d) {
+        const transformed = transformPathData(d, matrix, svgHeight, viewBox, upm, ascender)
+        if (transformed) paths.push(transformed)
+      }
+    } else if (tagName === 'rect') {
+      const x = parseFloat(el.getAttribute('x') ?? '0')
+      const y = parseFloat(el.getAttribute('y') ?? '0')
+      const w = parseFloat(el.getAttribute('width') ?? '0')
+      const h = parseFloat(el.getAttribute('height') ?? '0')
+      const rx = parseFloat(el.getAttribute('rx') ?? '0')
+      const ry = parseFloat(el.getAttribute('ry') ?? el.getAttribute('rx') ?? '0')
+      // Convert rect to path
+      let d: string
+      if (rx === 0 && ry === 0) {
+        d = `M ${x},${y} H ${x+w} V ${y+h} H ${x} Z`
+      } else {
+        d = `M ${x+rx},${y} H ${x+w-rx} A ${rx},${ry} 0 0 1 ${x+w},${y+ry} V ${y+h-ry} A ${rx},${ry} 0 0 1 ${x+w-rx},${y+h} H ${x+rx} A ${rx},${ry} 0 0 1 ${x},${y+h-ry} V ${y+ry} A ${rx},${ry} 0 0 1 ${x+rx},${y} Z`
+      }
+      const transformed = transformPathData(d, matrix, svgHeight, viewBox, upm, ascender)
+      if (transformed) paths.push(transformed)
+    } else if (tagName === 'circle') {
+      const cx = parseFloat(el.getAttribute('cx') ?? '0')
+      const cy = parseFloat(el.getAttribute('cy') ?? '0')
+      const r = parseFloat(el.getAttribute('r') ?? '0')
+      const k = 0.5522847498
+      const d = `M ${cx-r},${cy} C ${cx-r},${cy-k*r} ${cx-k*r},${cy-r} ${cx},${cy-r} C ${cx+k*r},${cy-r} ${cx+r},${cy-k*r} ${cx+r},${cy} C ${cx+r},${cy+k*r} ${cx+k*r},${cy+r} ${cx},${cy+r} C ${cx-k*r},${cy+r} ${cx-r},${cy+k*r} ${cx-r},${cy} Z`
+      const transformed = transformPathData(d, matrix, svgHeight, viewBox, upm, ascender)
+      if (transformed) paths.push(transformed)
+    } else if (tagName === 'ellipse') {
+      const cx = parseFloat(el.getAttribute('cx') ?? '0')
+      const cy = parseFloat(el.getAttribute('cy') ?? '0')
+      const rx2 = parseFloat(el.getAttribute('rx') ?? '0')
+      const ry2 = parseFloat(el.getAttribute('ry') ?? '0')
+      const k = 0.5522847498
+      const d = `M ${cx-rx2},${cy} C ${cx-rx2},${cy-k*ry2} ${cx-k*rx2},${cy-ry2} ${cx},${cy-ry2} C ${cx+k*rx2},${cy-ry2} ${cx+rx2},${cy-k*ry2} ${cx+rx2},${cy} C ${cx+rx2},${cy+k*ry2} ${cx+k*rx2},${cy+ry2} ${cx},${cy+ry2} C ${cx-k*rx2},${cy+ry2} ${cx-rx2},${cy+k*ry2} ${cx-rx2},${cy} Z`
+      const transformed = transformPathData(d, matrix, svgHeight, viewBox, upm, ascender)
+      if (transformed) paths.push(transformed)
+    } else if (tagName === 'polygon' || tagName === 'polyline') {
+      const pointsAttr = el.getAttribute('points') ?? ''
+      const pts = pointsAttr.trim().split(/[\s,]+/).map(Number)
+      if (pts.length >= 2) {
+        let d = `M ${pts[0]},${pts[1]}`
+        for (let j = 2; j < pts.length; j += 2) {
+          d += ` L ${pts[j]},${pts[j+1]}`
+        }
+        if (tagName === 'polygon') d += ' Z'
+        const transformed = transformPathData(d, matrix, svgHeight, viewBox, upm, ascender)
+        if (transformed) paths.push(transformed)
+      }
+    }
+
+    // Recurse into children (g, symbol, etc.)
+    for (const child of Array.from(el.children)) {
+      collectPaths(child, matrix)
+    }
+  }
+
+  collectPaths(svg, { ...IDENTITY })
+
+  return {
+    paths,
+    hasStrokes,
+    strokeWarning: hasStrokes
+      ? 'This glyph contains strokes. Strokes are not supported in font outlines — only filled paths will be exported. The glyph will be skipped during export.'
+      : undefined,
+    svgWidth,
+    svgHeight,
+    viewBox,
+  }
+}

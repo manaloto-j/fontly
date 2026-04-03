@@ -1,0 +1,23 @@
+/* Append this to the existing Navbar.module.css */
+
+.saveBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0 10px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+
+.saveBtn:hover {
+  background: var(--highlight);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
