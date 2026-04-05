@@ -212,6 +212,59 @@
   pointer-events: none;
 }
 
+/* ── Tool palette ── */
+.toolPalette {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  box-shadow: var(--shadow-sm);
+}
+
+.toolBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  transition:
+    background 0.12s,
+    color 0.12s;
+  position: relative;
+}
+
+.toolBtn:hover {
+  background: var(--highlight);
+  color: var(--text-primary);
+}
+
+.toolBtnActive {
+  background: var(--accent) !important;
+  color: white !important;
+}
+
+.toolBtnLabel {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+/* ── Canvas ── */
 .canvas {
   position: relative;
   background: var(--surface);
@@ -220,6 +273,7 @@
   overflow: hidden;
   box-shadow: var(--shadow-lg);
   flex-shrink: 0;
+  user-select: none;
 }
 
 /* ── Guide lines ── */
@@ -232,12 +286,52 @@
   opacity: 0.6;
   pointer-events: none;
   z-index: 10;
+  display: flex;
+  align-items: center;
+  transition: opacity 0.1s;
+}
+
+/* When guides tool is active, make lines interactive */
+.guideLineDraggable {
+  pointer-events: all;
+  cursor: ns-resize;
+  /* Expand hit area vertically */
+  padding: 6px 0;
+  margin: -6px 0;
+  opacity: 0.7;
+}
+
+.guideLineDraggable:hover {
+  opacity: 1;
+}
+
+.guideLineDragging {
+  opacity: 1 !important;
+  z-index: 15 !important;
+}
+
+/* The 1px colored line inside the hit area */
+.guideLine::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--guide-color, #4a9eff);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* When draggable, thicken line slightly on hover */
+.guideLineDraggable:hover::before {
+  height: 2px;
 }
 
 .guideLabel {
   position: absolute;
   right: 6px;
-  top: -9px;
+  top: 50%;
+  transform: translateY(-50%) translateY(-9px);
   font-size: 9px;
   font-weight: 500;
   letter-spacing: 0.04em;
@@ -248,6 +342,20 @@
   opacity: 0.85;
   white-space: nowrap;
   font-family: var(--font-sans);
+  pointer-events: none;
+}
+
+/* Drag handle dots shown when guides tool active */
+.guideDragHandle {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--guide-color, #4a9eff);
+  opacity: 0.7;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
 }
 
 .guideLineV {
@@ -261,12 +369,16 @@
   z-index: 10;
 }
 
-/* ── SVG wrapper (uses native SVG transforms) ── */
+/* ── SVG wrapper ── */
 .svgWrapper {
   position: absolute;
   inset: 0;
   z-index: 5;
   overflow: hidden;
+}
+
+.svgWrapperMovable {
+  /* Visual feedback that this layer is draggable */
 }
 
 /* ── Empty canvas ── */
@@ -342,6 +454,37 @@
   color: var(--text-primary);
 }
 
+/* ── Tool hint ── */
+.toolHint {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  border-radius: 99px;
+  white-space: nowrap;
+  z-index: 25;
+  pointer-events: none;
+  box-shadow: var(--shadow-sm);
+  animation: hintIn 0.18s ease;
+}
+
+@keyframes hintIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 .canvasInfo {
   display: flex;
   align-items: center;
@@ -387,12 +530,10 @@
     border-color 0.12s,
     background 0.12s;
 }
-
 .tab:hover {
   color: var(--text-primary);
   background: var(--highlight);
 }
-
 .tabActive {
   color: var(--text-primary);
   border-bottom-color: var(--accent);
@@ -417,15 +558,37 @@
   gap: 5px;
 }
 
+/* Row that holds the label + unit/badge on the right */
+.fieldLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
 .fieldLabel {
   font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-tertiary);
-  display: flex;
-  align-items: center;
-  gap: 4px;
+}
+
+/* Subtle unit tag on the right of the label row */
+.fieldUnit {
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  color: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+/* Thin divider between field groups / sections */
+.sectionDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0;
 }
 
 .unit {
@@ -453,7 +616,6 @@
   outline: none;
   cursor: pointer;
 }
-
 .slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -469,25 +631,75 @@
   transform: scale(1.2);
 }
 
+/* Wrapper for input + inline unit suffix (%, °) */
+.numInputWrap {
+  display: flex;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: border-color 0.12s;
+}
+.numInputWrap:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
 .numInput {
-  width: 58px;
+  width: 44px;
   height: 28px;
   font-size: 12px;
   font-weight: 500;
   text-align: right;
   color: var(--text-primary);
+  background: transparent;
+  border: none;
+  padding: 0 4px 0 7px;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+  /* When used standalone (no wrap) */
+}
+
+/* standalone numInput (Offset X/Y, baseline, spacing) */
+.numInput:not(.numInputWrap *) {
+  width: 58px;
+  height: 28px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0 7px;
-  outline: none;
-  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
   transition: border-color 0.12s;
 }
-.numInput:focus {
+.numInput:not(.numInputWrap *):focus {
   border-color: var(--accent);
   background: var(--surface);
+}
+
+.numUnit {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  padding: 0 6px 0 2px;
+  pointer-events: none;
+  user-select: none;
+  line-height: 28px;
+}
+
+/* Linked badge shown next to Scale Y when locked — matches the Lock button style */
+.linkedBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  color: white;
+  background: var(--accent);
+  padding: 2px 6px 2px 4px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
 }
 
 .flipRow {
@@ -618,6 +830,9 @@
   line-height: 1.5;
   margin-bottom: 2px;
 }
+.guidesNote strong {
+  color: var(--text-secondary);
+}
 
 .guideToggleRow {
   display: flex;
@@ -635,6 +850,19 @@
   flex: 1;
   font-size: 12.5px;
   color: var(--text-primary);
+}
+
+/* Y position readout in guides tab */
+.guideYVal {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  min-width: 32px;
+  text-align: center;
 }
 
 .toggleSmall {
@@ -671,84 +899,33 @@
   margin: 2px 0;
 }
 
-/* ── Scale dimension row (W/H style with center link) ── */
-.scaleDimRow {
-  display: flex;
+/* ── Scale lock button ── */
+.lockBtn {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-
-.scaleDimField {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  background: var(--bg);
-  transition: border-color 0.12s;
-}
-.scaleDimField:focus-within {
-  border-color: var(--accent);
-  background: var(--surface);
-}
-
-.scaleDimLabel {
+  gap: 3px;
   font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  padding: 0 5px;
-  background: var(--highlight);
-  border-right: 1px solid var(--border);
-  height: 28px;
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.scaleDimInput {
-  flex: 1;
-  height: 28px;
-  font-size: 12px;
   font-weight: 500;
-  text-align: center;
-  color: var(--text-primary);
-  background: transparent;
-  border: none;
-  outline: none;
-  padding: 0 6px;
-  font-variant-numeric: tabular-nums;
-  font-family: var(--font-sans);
-  min-width: 0;
-}
-
-.scaleLinkBtn {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
   color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
   transition: all 0.12s;
   cursor: pointer;
 }
-.scaleLinkBtn:hover {
+.lockBtn:hover {
   background: var(--highlight);
-  border-color: var(--border-strong);
   color: var(--text-primary);
+  border-color: var(--border-strong);
 }
-.scaleLinkBtnActive {
+.lockBtnActive {
   background: var(--accent);
   border-color: var(--accent);
   color: white;
 }
-.scaleLinkBtnActive:hover {
+.lockBtnActive:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+  color: white;
 }

@@ -43,13 +43,12 @@ const DEFAULT_SPACING = {
   leftBearing: DEFAULT_ADJUSTMENTS.leftBearing,
 };
 
-// Canvas dimensions
 const CANVAS_W = 480;
 const CANVAS_H = 520;
-
-// Guide positions as fractions (matching GUIDE_LINES defaultY)
 const BASELINE_Y = 0.75;
 const CAP_HEIGHT_Y = 0.18;
+
+type ToolMode = "select" | "move" | "guides";
 
 function parseSVGContent(svgString: string): {
   innerContent: string;
@@ -99,40 +98,24 @@ function parseSVGContent(svgString: string): {
   };
 }
 
-/**
- * Compute auto-fit adjustments so the glyph fills baseline→capHeight on first upload.
- * Returns scaleX, scaleY, offsetX, offsetY (baseline shift handled via offsetY).
- */
 function computeAutoFit(parsedSVG: {
   width: number;
   height: number;
   aspectRatio: number;
 }): Partial<GlyphAdjustments> {
   const padding = 40;
-  const availW = CANVAS_W - padding * 2;
   const availH = CANVAS_H - padding * 2;
-
-  // Target zone: cap height line to baseline line
-  const capY = CAP_HEIGHT_Y * CANVAS_H; // px from top
-  const baseY = BASELINE_Y * CANVAS_H; // px from top
-  const targetH = baseY - capY; // height of the zone in px
-  const targetW = availW; // use full available width
-
-  // Scale to fit within target zone preserving aspect ratio
+  const availW = CANVAS_W - padding * 2;
+  const capY = CAP_HEIGHT_Y * CANVAS_H;
+  const baseY = BASELINE_Y * CANVAS_H;
+  const targetH = baseY - capY;
+  const targetW = availW;
   const scaleToFitH = targetH / availH;
   const scaleToFitW = targetW / availW;
-  const scale =
-    Math.min(scaleToFitH, scaleToFitW) *
-    (availH / (parsedSVG.height * (availH / parsedSVG.height)));
-
-  // Simpler: scale so fitted glyph height = targetH
-  const fitScale = targetH / availH;
-
-  // Vertical offset: move glyph center to midpoint of capY–baseY
-  const targetCenterY = capY + targetH / 2; // px from top, canvas space
+  const fitScale = Math.min(scaleToFitH, scaleToFitW);
+  const targetCenterY = capY + targetH / 2;
   const canvasCenterY = CANVAS_H / 2;
-  const offsetY = -(targetCenterY - canvasCenterY); // negative = move up
-
+  const offsetY = -(targetCenterY - canvasCenterY);
   return {
     scaleX: Math.round(fitScale * 100) / 100,
     scaleY: Math.round(fitScale * 100) / 100,
@@ -173,11 +156,14 @@ function useAdjustmentHistory(initial: GlyphAdjustments) {
     return stack[newIndex];
   }, [index, stack]);
 
-  const canUndo = index > 0;
-  const canRedo = index < stack.length - 1;
-  const current = stack[index];
-
-  return { current, push, undo, redo, canUndo, canRedo };
+  return {
+    current: stack[index],
+    push,
+    undo,
+    redo,
+    canUndo: index > 0,
+    canRedo: index < stack.length - 1,
+  };
 }
 
 export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
@@ -215,22 +201,48 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     rightBearing: true,
   });
 
+  // Guide Y positions as fractions (0–1), keyed by guide key
+  const [guidePositions, setGuidePositions] = useState<Record<string, number>>(
+    Object.fromEntries(GUIDE_LINES.map((g) => [g.key, g.defaultY])),
+  );
+
   const [activeTab, setActiveTab] = useState<
     "transform" | "spacing" | "guides"
   >("transform");
   const [scaleLocked, setScaleLocked] = useState(false);
+  const [toolMode, setToolMode] = useState<ToolMode>("select");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const autoFitApplied = useRef(false);
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  // Drag state for move-glyph tool
+  const glyphDragRef = useRef<{
+    startX: number;
+    startY: number;
+    startOffX: number;
+    startOffY: number;
+    adjSnapshot: GlyphAdjustments;
+  } | null>(null);
+  const [isDraggingGlyph, setIsDraggingGlyph] = useState(false);
+  // Ref to the SVG <g> element so we can mutate its transform directly (no re-render during drag)
+  const svgGRef = useRef<SVGGElement>(null);
+
+  // Drag state for move-guides tool
+  const guideDragRef = useRef<{
+    key: string;
+    startMouseY: number;
+    startFrac: number;
+  } | null>(null);
+  const [draggingGuideKey, setDraggingGuideKey] = useState<string | null>(null);
 
   const parsedSVG = useMemo(() => {
     if (!glyph?.svgContent) return null;
     return parseSVGContent(glyph.svgContent);
   }, [glyph?.svgContent]);
 
-  // Auto-fit on first upload (only when svgContent first becomes non-null)
+  // Auto-fit on first upload
   useEffect(() => {
     if (!parsedSVG || autoFitApplied.current) return;
-    // Only auto-fit if adjustments are still at default (fresh upload)
     const isDefault =
       storedAdj.scaleX === 1 &&
       storedAdj.scaleY === 1 &&
@@ -241,7 +253,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
       autoFitApplied.current = true;
       return;
     }
-
     const fitted = computeAutoFit(parsedSVG);
     const next = { ...storedAdj, ...fitted };
     adjHistory.push(next);
@@ -254,14 +265,14 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     (dir: -1 | 1) => {
       const nextIndex = currentIndex + dir;
       if (nextIndex < 0 || nextIndex >= orderedCps.length) return;
-      const event = new CustomEvent("glyph-navigate", {
-        detail: orderedCps[nextIndex],
-      });
-      window.dispatchEvent(event);
+      window.dispatchEvent(
+        new CustomEvent("glyph-navigate", { detail: orderedCps[nextIndex] }),
+      );
     },
     [currentIndex, orderedCps],
   );
 
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const ctrl = e.ctrlKey || e.metaKey;
@@ -289,6 +300,10 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
         const next = adjHistory.redo();
         if (next) updateAdjustments(codepoint, next);
       }
+      // Tool shortcuts
+      if (e.key === "v" && !ctrl) setToolMode("select");
+      if (e.key === "m" && !ctrl) setToolMode("move");
+      if (e.key === "g" && !ctrl) setToolMode("guides");
     };
     window.addEventListener("keydown", handler, { capture: true });
     return () =>
@@ -300,6 +315,119 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     adjHistory.push(next);
     updateAdjustments(codepoint, next);
   };
+
+  // ── Move-glyph drag handlers ────────────────────────────────────────────────
+  const handleCanvasMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (toolMode === "move" && parsedSVG) {
+        e.preventDefault();
+        glyphDragRef.current = {
+          startX: e.clientX,
+          startY: e.clientY,
+          startOffX: adj.offsetX,
+          startOffY: adj.offsetY,
+          adjSnapshot: { ...adj },
+        };
+        setIsDraggingGlyph(true);
+      }
+    },
+    [toolMode, parsedSVG, adj],
+  );
+
+  useEffect(() => {
+    if (!isDraggingGlyph) return;
+
+    const buildLiveTransform = (dx: number, dy: number): string => {
+      const snap = glyphDragRef.current!.adjSnapshot;
+      const newOffX = glyphDragRef.current!.startOffX + dx;
+      const newOffY = glyphDragRef.current!.startOffY + dy;
+      const flipScaleX = snap.flipH ? -1 : 1;
+      const flipScaleY = snap.flipV ? -1 : 1;
+      return [
+        `translate(${cx}, ${cy})`,
+        snap.rotate !== 0 ? `rotate(${snap.rotate})` : "",
+        `scale(${snap.scaleX * flipScaleX}, ${snap.scaleY * flipScaleY})`,
+        `translate(${-cx + newOffX}, ${-cy + newOffY + snap.baseline})`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    };
+
+    const onMove = (e: MouseEvent) => {
+      if (!glyphDragRef.current || !svgGRef.current) return;
+      const dx = e.clientX - glyphDragRef.current.startX;
+      const dy = e.clientY - glyphDragRef.current.startY;
+      // Direct DOM mutation — zero React re-renders, buttery smooth
+      svgGRef.current.setAttribute("transform", buildLiveTransform(dx, dy));
+    };
+
+    const onUp = (e: MouseEvent) => {
+      if (!glyphDragRef.current) return;
+      const snap = glyphDragRef.current.adjSnapshot;
+      const dx = e.clientX - glyphDragRef.current.startX;
+      const dy = e.clientY - glyphDragRef.current.startY;
+      const newOffX = Math.round(glyphDragRef.current.startOffX + dx);
+      const newOffY = Math.round(glyphDragRef.current.startOffY + dy);
+      const committed = { ...snap, offsetX: newOffX, offsetY: newOffY };
+      adjHistory.push(committed);
+      updateAdjustments(codepoint, committed);
+      glyphDragRef.current = null;
+      setIsDraggingGlyph(false);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    // All state read through refs — safe to omit deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDraggingGlyph]);
+
+  // ── Move-guides drag handlers ───────────────────────────────────────────────
+  const handleGuideMouseDown = useCallback(
+    (e: React.MouseEvent, key: string) => {
+      if (toolMode !== "guides") return;
+      e.preventDefault();
+      e.stopPropagation();
+      guideDragRef.current = {
+        key,
+        startMouseY: e.clientY,
+        startFrac: guidePositions[key],
+      };
+      setDraggingGuideKey(key);
+    },
+    [toolMode, guidePositions],
+  );
+
+  useEffect(() => {
+    if (!draggingGuideKey) return;
+    const onMove = (e: MouseEvent) => {
+      if (!guideDragRef.current || !canvasRef.current) return;
+      const canvasRect = canvasRef.current.getBoundingClientRect();
+      const dy = e.clientY - guideDragRef.current.startMouseY;
+      const fracDelta = dy / canvasRect.height;
+      const newFrac = Math.max(
+        0.01,
+        Math.min(0.99, guideDragRef.current.startFrac + fracDelta),
+      );
+      setGuidePositions((prev) => ({
+        ...prev,
+        [guideDragRef.current!.key]: newFrac,
+      }));
+    };
+    const onUp = () => {
+      guideDragRef.current = null;
+      setDraggingGuideKey(null);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [draggingGuideKey]);
 
   const handleUpload = () => {
     autoFitApplied.current = false;
@@ -316,11 +444,19 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     e.target.value = "";
   };
 
-  const resetAdj = () => {
-    adjHistory.push(DEFAULT_ADJUSTMENTS);
-    updateAdjustments(codepoint, DEFAULT_ADJUSTMENTS);
+  // Reset snaps to auto-fit scale (fills cap→baseline guide zone) rather than raw scale=1
+  const getFitDefaults = (): GlyphAdjustments => {
+    if (parsedSVG) {
+      const fitted = computeAutoFit(parsedSVG);
+      return { ...DEFAULT_ADJUSTMENTS, ...fitted };
+    }
+    return { ...DEFAULT_ADJUSTMENTS };
   };
-
+  const resetAdj = () => {
+    const next = getFitDefaults();
+    adjHistory.push(next);
+    updateAdjustments(codepoint, next);
+  };
   const resetSpacing = () => {
     const next = { ...adj, ...DEFAULT_SPACING };
     adjHistory.push(next);
@@ -330,10 +466,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   const cx = CANVAS_W / 2;
   const cy = CANVAS_H / 2;
 
-  const buildInlineSVGTransform = (): {
-    fitTransform: string;
-    adjustTransform: string;
-  } => {
+  const buildInlineSVGTransform = () => {
     if (!parsedSVG) return { fitTransform: "", adjustTransform: "" };
     const padding = 40;
     const availW = CANVAS_W - padding * 2;
@@ -362,21 +495,27 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
 
   const { adjustTransform } = buildInlineSVGTransform();
 
-  // Scale change with lock support
-  const handleScaleX = (v: number) => {
-    if (scaleLocked) {
-      update({ scaleX: v, scaleY: v });
-    } else {
-      update({ scaleX: v });
-    }
+  // Scale is stored as 0.1–3 internally; UI shows/accepts percent (10–300)
+  const scaleXPct = Math.round(adj.scaleX * 100);
+  const scaleYPct = Math.round(adj.scaleY * 100);
+  const handleScaleXPct = (pct: number) => {
+    const v = Math.max(10, Math.min(300, pct)) / 100;
+    update(scaleLocked ? { scaleX: v, scaleY: v } : { scaleX: v });
   };
-  const handleScaleY = (v: number) => {
-    if (scaleLocked) {
-      update({ scaleX: v, scaleY: v });
-    } else {
-      update({ scaleY: v });
-    }
+  const handleScaleYPct = (pct: number) => {
+    const v = Math.max(10, Math.min(300, pct)) / 100;
+    update(scaleLocked ? { scaleX: v, scaleY: v } : { scaleY: v });
   };
+
+  // Canvas cursor style
+  const canvasCursor =
+    toolMode === "move"
+      ? isDraggingGlyph
+        ? "grabbing"
+        : "grab"
+      : toolMode === "guides"
+        ? "default"
+        : "default";
 
   return (
     <div className={styles.root}>
@@ -525,27 +664,111 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
       <div className={styles.body}>
         {/* Canvas */}
         <div className={styles.canvasArea}>
+          {/* ── Tool palette ── */}
+          <div className={styles.toolPalette}>
+            <button
+              className={`${styles.toolBtn} ${toolMode === "select" ? styles.toolBtnActive : ""}`}
+              onClick={() => setToolMode("select")}
+              title="Select (V) — default mode"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M3 2l8 5-4.5 1.5L5 13 3 2z"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinejoin="round"
+                  fill={toolMode === "select" ? "currentColor" : "none"}
+                  fillOpacity={toolMode === "select" ? 0.15 : 0}
+                />
+              </svg>
+              <span className={styles.toolBtnLabel}>Select</span>
+            </button>
+
+            <button
+              className={`${styles.toolBtn} ${toolMode === "move" ? styles.toolBtnActive : ""}`}
+              onClick={() => setToolMode("move")}
+              title="Move glyph (M) — drag to reposition"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M7 2v10M2 7h10"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M5 4L7 2l2 2M5 10l2 2 2-2M4 5L2 7l2 2M10 5l2 2-2 2"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className={styles.toolBtnLabel}>Move</span>
+            </button>
+
+            <button
+              className={`${styles.toolBtn} ${toolMode === "guides" ? styles.toolBtnActive : ""}`}
+              onClick={() => setToolMode("guides")}
+              title="Move guides (G) — drag guide lines"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path
+                  d="M2 4h10M2 7h10M2 10h10"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                  strokeDasharray={toolMode === "guides" ? "0" : "2 1.5"}
+                />
+                <circle
+                  cx="7"
+                  cy="4"
+                  r="1.5"
+                  fill="currentColor"
+                  opacity={toolMode === "guides" ? 1 : 0.5}
+                />
+              </svg>
+              <span className={styles.toolBtnLabel}>Guides</span>
+            </button>
+          </div>
+
           <div
+            ref={canvasRef}
             className={styles.canvas}
-            style={{ width: CANVAS_W, height: CANVAS_H }}
+            style={{ width: CANVAS_W, height: CANVAS_H, cursor: canvasCursor }}
+            onMouseDown={handleCanvasMouseDown}
           >
+            {/* Guide lines */}
             {GUIDE_LINES.map(
               (g) =>
                 visibleGuides[g.key] && (
                   <div
                     key={g.key}
-                    className={styles.guideLine}
+                    className={`${styles.guideLine} ${toolMode === "guides" ? styles.guideLineDraggable : ""} ${draggingGuideKey === g.key ? styles.guideLineDragging : ""}`}
                     style={
                       {
-                        top: `${g.defaultY * 100}%`,
+                        top: `${guidePositions[g.key] * 100}%`,
                         "--guide-color": g.color,
                       } as React.CSSProperties
                     }
+                    onMouseDown={(e) => handleGuideMouseDown(e, g.key)}
                   >
                     <span className={styles.guideLabel}>{g.label}</span>
+                    {toolMode === "guides" && (
+                      <span className={styles.guideDragHandle}>
+                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                          <circle cx="2" cy="2" r="1" fill="currentColor" />
+                          <circle cx="6" cy="2" r="1" fill="currentColor" />
+                          <circle cx="2" cy="6" r="1" fill="currentColor" />
+                          <circle cx="6" cy="6" r="1" fill="currentColor" />
+                        </svg>
+                      </span>
+                    )}
                   </div>
                 ),
             )}
+
+            {/* Vertical bearing guides */}
             {visibleGuides.leftBearing && (
               <div
                 className={styles.guideLineV}
@@ -570,7 +793,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             )}
 
             {parsedSVG ? (
-              <div className={styles.svgWrapper}>
+              <div
+                className={`${styles.svgWrapper} ${toolMode === "move" ? styles.svgWrapperMovable : ""}`}
+              >
                 <svg
                   width={CANVAS_W}
                   height={CANVAS_H}
@@ -581,7 +806,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     overflow: "visible",
                   }}
                 >
-                  <g transform={adjustTransform}>
+                  <g ref={svgGRef} transform={adjustTransform}>
                     <svg
                       x={0}
                       y={0}
@@ -648,6 +873,14 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                 Replace
               </button>
             )}
+
+            {/* Active tool hint overlay */}
+            {toolMode !== "select" && !isDraggingGlyph && !draggingGuideKey && (
+              <div className={styles.toolHint}>
+                {toolMode === "move" && "Drag to reposition glyph"}
+                {toolMode === "guides" && "Drag a guide line to reposition it"}
+              </div>
+            )}
           </div>
 
           <div className={styles.canvasInfo}>
@@ -684,10 +917,10 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             {/* ── Transform tab ── */}
             {activeTab === "transform" && (
               <div className={styles.section}>
-                {/* Scale X + Y with lock toggle */}
+                {/* ── Scale ── */}
                 <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>
-                    Scale X
+                  <div className={styles.fieldLabelRow}>
+                    <span className={styles.fieldLabel}>Scale X</span>
                     <button
                       className={`${styles.lockBtn} ${scaleLocked ? styles.lockBtnActive : ""}`}
                       onClick={() => setScaleLocked((l) => !l)}
@@ -699,8 +932,8 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     >
                       {scaleLocked ? (
                         <svg
-                          width="11"
-                          height="11"
+                          width="10"
+                          height="10"
                           viewBox="0 0 11 11"
                           fill="none"
                         >
@@ -722,8 +955,8 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                         </svg>
                       ) : (
                         <svg
-                          width="11"
-                          height="11"
+                          width="10"
+                          height="10"
                           viewBox="0 0 11 11"
                           fill="none"
                         >
@@ -746,64 +979,104 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                       )}
                       {scaleLocked ? "Linked" : "Link"}
                     </button>
-                  </label>
+                  </div>
                   <div className={styles.sliderRow}>
                     <input
                       type="range"
-                      min="0.1"
-                      max="3"
-                      step="0.01"
-                      value={adj.scaleX}
-                      onChange={(e) => handleScaleX(parseFloat(e.target.value))}
+                      min="10"
+                      max="300"
+                      step="1"
+                      value={scaleXPct}
+                      onChange={(e) =>
+                        handleScaleXPct(parseInt(e.target.value))
+                      }
                       className={styles.slider}
                     />
-                    <input
-                      type="number"
-                      min="0.1"
-                      max="3"
-                      step="0.01"
-                      value={adj.scaleX.toFixed(2)}
-                      onChange={(e) =>
-                        handleScaleX(parseFloat(e.target.value) || 1)
-                      }
-                      className={styles.numInput}
-                    />
+                    <div className={styles.numInputWrap}>
+                      <input
+                        type="number"
+                        min="10"
+                        max="300"
+                        step="1"
+                        value={scaleXPct}
+                        onChange={(e) =>
+                          handleScaleXPct(parseInt(e.target.value) || 100)
+                        }
+                        className={styles.numInput}
+                      />
+                      <span className={styles.numUnit}>%</span>
+                    </div>
                   </div>
                 </div>
 
                 <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>
-                    Scale Y
+                  <div className={styles.fieldLabelRow}>
+                    <span className={styles.fieldLabel}>Scale Y</span>
                     {scaleLocked && (
-                      <span className={styles.linkedHint}>linked</span>
+                      <span className={styles.linkedBadge}>
+                        <svg
+                          width="9"
+                          height="9"
+                          viewBox="0 0 11 11"
+                          fill="none"
+                        >
+                          <rect
+                            x="2"
+                            y="5"
+                            width="7"
+                            height="5"
+                            rx="1"
+                            stroke="currentColor"
+                            strokeWidth="1.2"
+                          />
+                          <path
+                            d="M3.5 5V3.5a2 2 0 0 1 4 0V5"
+                            stroke="currentColor"
+                            strokeWidth="1.2"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                        Linked
+                      </span>
                     )}
-                  </label>
+                  </div>
                   <div className={styles.sliderRow}>
                     <input
                       type="range"
-                      min="0.1"
-                      max="3"
-                      step="0.01"
-                      value={adj.scaleY}
-                      onChange={(e) => handleScaleY(parseFloat(e.target.value))}
+                      min="10"
+                      max="300"
+                      step="1"
+                      value={scaleYPct}
+                      onChange={(e) =>
+                        handleScaleYPct(parseInt(e.target.value))
+                      }
                       className={styles.slider}
                     />
-                    <input
-                      type="number"
-                      min="0.1"
-                      max="3"
-                      step="0.01"
-                      value={adj.scaleY.toFixed(2)}
-                      onChange={(e) =>
-                        handleScaleY(parseFloat(e.target.value) || 1)
-                      }
-                      className={styles.numInput}
-                    />
+                    <div className={styles.numInputWrap}>
+                      <input
+                        type="number"
+                        min="10"
+                        max="300"
+                        step="1"
+                        value={scaleYPct}
+                        onChange={(e) =>
+                          handleScaleYPct(parseInt(e.target.value) || 100)
+                        }
+                        className={styles.numInput}
+                      />
+                      <span className={styles.numUnit}>%</span>
+                    </div>
                   </div>
                 </div>
 
+                <div className={styles.sectionDivider} />
+
+                {/* ── Position ── */}
                 <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Offset X</label>
+                  <div className={styles.fieldLabelRow}>
+                    <span className={styles.fieldLabel}>Offset X</span>
+                    <span className={styles.fieldUnit}>px</span>
+                  </div>
                   <div className={styles.sliderRow}>
                     <input
                       type="range"
@@ -831,7 +1104,10 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                 </div>
 
                 <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Offset Y</label>
+                  <div className={styles.fieldLabelRow}>
+                    <span className={styles.fieldLabel}>Offset Y</span>
+                    <span className={styles.fieldUnit}>px</span>
+                  </div>
                   <div className={styles.sliderRow}>
                     <input
                       type="range"
@@ -858,8 +1134,14 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                   </div>
                 </div>
 
+                <div className={styles.sectionDivider} />
+
+                {/* ── Rotation ── */}
                 <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Rotate</label>
+                  <div className={styles.fieldLabelRow}>
+                    <span className={styles.fieldLabel}>Rotate</span>
+                    <span className={styles.fieldUnit}>deg</span>
+                  </div>
                   <div className={styles.sliderRow}>
                     <input
                       type="range"
@@ -872,22 +1154,28 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                       }
                       className={styles.slider}
                     />
-                    <input
-                      type="number"
-                      min="-180"
-                      max="180"
-                      step="0.5"
-                      value={adj.rotate}
-                      onChange={(e) =>
-                        update({ rotate: parseFloat(e.target.value) || 0 })
-                      }
-                      className={styles.numInput}
-                    />
+                    <div className={styles.numInputWrap}>
+                      <input
+                        type="number"
+                        min="-180"
+                        max="180"
+                        step="0.5"
+                        value={adj.rotate}
+                        onChange={(e) =>
+                          update({ rotate: parseFloat(e.target.value) || 0 })
+                        }
+                        className={styles.numInput}
+                      />
+                      <span className={styles.numUnit}>°</span>
+                    </div>
                   </div>
                 </div>
 
                 <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Baseline shift</label>
+                  <div className={styles.fieldLabelRow}>
+                    <span className={styles.fieldLabel}>Baseline shift</span>
+                    <span className={styles.fieldUnit}>px</span>
+                  </div>
                   <div className={styles.sliderRow}>
                     <input
                       type="range"
@@ -914,8 +1202,11 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                   </div>
                 </div>
 
+                <div className={styles.sectionDivider} />
+
+                {/* ── Flip ── */}
                 <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Flip</label>
+                  <span className={styles.fieldLabel}>Flip</span>
                   <div className={styles.flipRow}>
                     <button
                       className={`${styles.flipBtn} ${adj.flipH ? styles.flipBtnActive : ""}`}
@@ -961,7 +1252,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                 </div>
 
                 <button className={styles.resetBtn} onClick={resetAdj}>
-                  Reset all transforms
+                  Reset to fit guidelines
                 </button>
               </div>
             )}
@@ -1070,7 +1361,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                   </div>
                 </div>
 
-                {/* Reset spacing */}
                 <button className={styles.resetBtn} onClick={resetSpacing}>
                   Reset spacing to default
                 </button>
@@ -1081,7 +1371,8 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             {activeTab === "guides" && (
               <div className={styles.section}>
                 <p className={styles.guidesNote}>
-                  Toggle guide line visibility on the canvas.
+                  Toggle guide line visibility. Switch to{" "}
+                  <strong>Guides tool</strong> (G) to drag them on canvas.
                 </p>
                 {GUIDE_LINES.map((g) => (
                   <div key={g.key} className={styles.guideToggleRow}>
@@ -1090,6 +1381,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                       style={{ background: g.color }}
                     />
                     <span className={styles.guideName}>{g.label}</span>
+                    <span className={styles.guideYVal}>
+                      {Math.round(guidePositions[g.key] * 100)}%
+                    </span>
                     <button
                       className={`${styles.toggleSmall} ${visibleGuides[g.key] ? styles.toggleSmallOn : ""}`}
                       onClick={() =>
@@ -1105,7 +1399,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </button>
                   </div>
                 ))}
+
                 <div className={styles.guideDivider} />
+
                 <div className={styles.guideToggleRow}>
                   <span
                     className={styles.guideColorDot}
@@ -1126,6 +1422,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     <span className={styles.toggleSmallThumb} />
                   </button>
                 </div>
+
                 <div className={styles.guideToggleRow}>
                   <span
                     className={styles.guideColorDot}
@@ -1146,10 +1443,17 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     <span className={styles.toggleSmallThumb} />
                   </button>
                 </div>
+
                 <div className={styles.guideDivider} />
+
                 <button
                   className={styles.resetBtn}
-                  onClick={() =>
+                  onClick={() => {
+                    setGuidePositions(
+                      Object.fromEntries(
+                        GUIDE_LINES.map((g) => [g.key, g.defaultY]),
+                      ),
+                    );
                     setVisibleGuides({
                       ascender: true,
                       capHeight: true,
@@ -1158,10 +1462,10 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                       descender: true,
                       leftBearing: true,
                       rightBearing: true,
-                    })
-                  }
+                    });
+                  }}
                 >
-                  Show all guides
+                  Reset all guides
                 </button>
               </div>
             )}
