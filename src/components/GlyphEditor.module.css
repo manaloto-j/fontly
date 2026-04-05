@@ -1284,3 +1284,218 @@
     transform: translateX(-50%) translateY(0);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   APPEND THIS BLOCK to the END of src/components/GlyphEditor.module.css
+   ═══════════════════════════════════════════════════════════════════
+
+   Guide line snap feature styles
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Snapped guide line — pulsing highlight ── */
+.guideLineSnapped {
+  opacity: 1 !important;
+  z-index: 16 !important;
+}
+
+/* The coloured fill bar inside the guide line */
+.vizLineFillCanvas {
+  flex: 1;
+  height: 1px;
+  background: var(--guide-color, #4a9eff);
+  opacity: 0.6;
+  transition:
+    opacity 0.1s,
+    height 0.1s;
+}
+
+.guideLineSnapped .vizLineFillCanvas {
+  height: 2px;
+  opacity: 1;
+}
+
+/* Guide label */
+.guideLabelSnapped {
+  font-weight: 700 !important;
+  font-size: 10px !important;
+  padding: 2px 6px !important;
+  border-radius: 4px;
+  animation: snapLabelPop 0.2s ease;
+}
+
+@keyframes snapLabelPop {
+  0% {
+    transform: translateY(-50%) translateY(-9px) scale(0.9);
+  }
+  60% {
+    transform: translateY(-50%) translateY(-9px) scale(1.1);
+  }
+  100% {
+    transform: translateY(-50%) translateY(-9px) scale(1);
+  }
+}
+
+/* Pulse dot emitted from the snap point on the guide line */
+.guideSnapPulse {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: guideSnapPulseAnim 0.5s ease forwards;
+}
+
+@keyframes guideSnapPulseAnim {
+  0% {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 1;
+  }
+  60% {
+    transform: translate(-50%, -50%) scale(2.5);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(3);
+    opacity: 0;
+  }
+}
+
+/* ── Snap label — coloured, above the hint ── */
+/* (overrides the generic .snapLabel in the existing CSS) */
+.snapLabel {
+  position: absolute;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 14px;
+  border-radius: 99px;
+  white-space: nowrap;
+  z-index: 30;
+  pointer-events: none;
+  letter-spacing: 0.04em;
+  border: 1px solid;
+  animation: snapLabelIn 0.15s ease;
+  backdrop-filter: blur(4px);
+}
+
+@keyframes snapLabelIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ── Info box in the Snap tab ── */
+.snapHintBox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.snapHintBox strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.snapHintBox svg {
+  color: var(--text-tertiary);
+  margin-top: 1px;
+}
+
+/* ── Quick snap buttons ── */
+.snapQuickLabel {
+  font-size: 10.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-tertiary);
+  margin-bottom: -6px;
+}
+
+.snapQuickGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.snapQuickBtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  text-align: left;
+  transition: all 0.12s;
+  cursor: pointer;
+}
+
+.snapQuickBtn:hover {
+  background: var(--highlight);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  /* Subtle left accent using snap color */
+  border-left: 3px solid var(--snap-color, var(--border-strong));
+  padding-left: 8px;
+}
+
+.snapQuickDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Snap indicator lines (coloured to match guide) ── */
+.snapLineX {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 22;
+  animation: snapLineAppear 0.1s ease;
+}
+
+.snapLineY {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 22;
+  animation: snapLineAppear 0.1s ease;
+}
+
+@keyframes snapLineAppear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
