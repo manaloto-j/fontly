@@ -1,22 +1,30 @@
-# Fontly — Step 8: Bug Fixes
+# Fontly — Step 9: Snap-to-guides + rendering fix
 
-## Replace these 3 files:
-- src/engine/fontExporter.ts      ← TTF export fix
-- src/components/FontPanel.tsx    ← renamed button + overflow fix
-- src/components/FontPanel.module.css ← panel now fixed-position, no overflow
+## Replace:
+- src/components/GlyphEditor.tsx
 
-## What was fixed
+## What changed
 
-### 1. TTF exported as OTF (bug)
-opentype.js font.download() always produces CFF/OTF binary regardless of filename.
-Fix: use font.arrayBuffer({ type: 'truetype' }) for TTF, font.arrayBuffer() for OTF.
+### 1. Snap-to-guides during Move tool drag
+When dragging with the Move tool (M), the glyph center now snaps to any
+visible guide line — Ascender, Cap Height, x-Height, Baseline, Descender.
 
-### 2. Panel overflows screen
-Panel was positioned with left:50% transform — pushed off right edge on small screens.
-Fix: position: fixed, top: 56px, right: 12px, max-height: calc(100vh - 68px).
-Panel now always stays within viewport, scrolls internally if content is tall.
+The snap logic:
+- Computes the glyph's visual center Y in canvas space (CANVAS_H/2 + offsetY)
+- Finds the nearest visible guide line within 10px threshold
+- Locks offsetY so glyph center lands exactly on that guide line
+- Highlights the guide line with a snap pulse and colored label
+- Shows a snap label ("⊡ Snapped to Baseline") in the guide's color
+- X-axis center snap still works (snaps offsetX to 0)
 
-### 3. Button renamed
-"Font settings" → "Export & Settings"
-Export tab is now the default tab when panel opens.
-Tab order changed to: Export | Metrics | Info
+### 2. SVG rendering fix
+The previous GlyphEditor used a two-level SVG approach that caused the glyph
+to appear tiny. The new approach:
+- Outer <g> applies user transforms (scale, rotate, flip, offset) around canvas center
+- Inner <svg> uses the glyph's own viewBox with preserveAspectRatio="xMidYMid meet"
+  to correctly fill the CANVAS_W × CANVAS_H space
+- This ensures the glyph fills the canvas at 1× scale and transforms apply correctly
+
+### 3. Live DOM transform during drag
+Transform is applied directly via svgGRef.current.setAttribute() during drag
+(no React state update = buttery smooth). React state is only updated on mouseup.
