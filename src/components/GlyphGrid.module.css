@@ -24,8 +24,12 @@
 }
 
 @keyframes overlayIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .dragOverlayInner {
@@ -45,8 +49,14 @@
 }
 
 @keyframes innerIn {
-  from { transform: scale(0.95); opacity: 0; }
-  to   { transform: scale(1); opacity: 1; }
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .dragOverlayHint {
@@ -78,8 +88,14 @@
 }
 
 @keyframes toastIn {
-  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 
 /* ── Section ── */
@@ -117,7 +133,10 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    background 0.15s;
   outline: none;
 }
 
@@ -236,4 +255,45 @@
 
 .cellFilled:hover .cpLabel {
   opacity: 0;
+}
+
+/* ── Scale lock button ── */
+.lockBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.12s;
+  cursor: pointer;
+  margin-left: auto;
+}
+.lockBtn:hover {
+  background: var(--highlight);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.lockBtnActive {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.lockBtnActive:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: white;
+}
+
+/* ── Linked hint on Scale Y label ── */
+.linkedHint {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--accent);
+  margin-left: auto;
+  letter-spacing: 0.02em;
 }
