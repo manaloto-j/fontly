@@ -44,19 +44,16 @@ const CANVAS_H = 520;
 const BASELINE_Y = 0.75;
 const CAP_HEIGHT_Y = 0.18;
 
-// ── Canvas viewport zoom ───────────────────────────────────────────────────────
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 8;
 const ZOOM_STEP_KEY = 0.25;
-const ZOOM_WHEEL_K = 0.001; // smooth Figma-like wheel sensitivity
+const ZOOM_WHEEL_K = 0.001;
 
-// ── Snap threshold ─────────────────────────────────────────────────────────────
 const SNAP_THRESHOLD = 8;
 type SnapAxis = null | "x" | "y" | "both";
 
 type ToolMode = "select" | "move" | "guides";
 
-// ── Viewport state ─────────────────────────────────────────────────────────────
 interface Viewport {
   zoom: number;
   panX: number;
@@ -181,6 +178,22 @@ function useAdjustmentHistory(initial: GlyphAdjustments) {
   };
 }
 
+// ── Helper: is a mouse event inside the canvas card? ─────────────────────────
+function isInsideCanvas(
+  e: MouseEvent,
+  canvasRef: React.RefObject<HTMLDivElement | null>,
+  viewport: Viewport,
+): boolean {
+  if (!canvasRef.current) return false;
+  const rect = canvasRef.current.getBoundingClientRect();
+  return (
+    e.clientX >= rect.left &&
+    e.clientX <= rect.right &&
+    e.clientY >= rect.top &&
+    e.clientY <= rect.bottom
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   const glyphs = useFontStore((s) => s.project.glyphs);
@@ -224,7 +237,8 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   const [activeTab, setActiveTab] = useState<
     "transform" | "spacing" | "guides"
   >("transform");
-  const [scaleLocked, setScaleLocked] = useState(false);
+  // FIX: scale locked BY DEFAULT
+  const [scaleLocked, setScaleLocked] = useState(true);
   const [toolMode, setToolMode] = useState<ToolMode>("select");
 
   // ── Viewport ──────────────────────────────────────────────────────────────────
@@ -268,6 +282,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   const [isPanning, setIsPanning] = useState(false);
   const spaceHeldRef = useRef(false);
 
+  // Track whether move-drag started inside the canvas card
+  const moveStartedInCanvasRef = useRef(false);
+
   // ── Drag: guides ─────────────────────────────────────────────────────────────
   const guideDragRef = useRef<{
     key: string;
@@ -281,6 +298,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     if (!glyph?.svgContent) return null;
     return parseSVGContent(glyph.svgContent);
   }, [glyph?.svgContent]);
+
+  // ── Baseline Y in canvas pixels (used for scale-from-bottom) ─────────────────
+  const baselineCanvasY = BASELINE_Y * CANVAS_H; // ~390px
 
   // ── Init viewport centred ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -365,7 +385,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     });
   }, []);
 
-  // ── Wheel: zoom centred on cursor (Figma-style) ────────────────────────────
+  // ── Wheel: zoom or pan ────────────────────────────────────────────────────────
   useEffect(() => {
     const el = canvasAreaRef.current;
     if (!el) return;
@@ -376,11 +396,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
       const mouseY = e.clientY - rect.top;
       const vp = viewportRef.current;
       if (e.ctrlKey || e.metaKey) {
-        // Ctrl+scroll = zoom towards cursor
         const factor = 1 - e.deltaY * ZOOM_WHEEL_K * 10;
         zoomToPoint(clampZoom(vp.zoom * factor), mouseX, mouseY);
       } else {
-        // Plain scroll = pan
         setViewport((v) => ({
           ...v,
           panX: v.panX - e.deltaX,
@@ -443,7 +461,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
         const n = adjHistory.redo();
         if (n) updateAdjustments(codepoint, n);
       }
-      // Zoom shortcuts (Ctrl+= Ctrl+- Ctrl+0 Ctrl+9, and bare +/-)
       if (ctrl && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
         zoomCentred(clampZoom(viewportRef.current.zoom + ZOOM_STEP_KEY));
@@ -518,7 +535,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     }
   }
 
-  // ── Area pointer-down: pan or glyph drag ──────────────────────────────────────
+  // ── Area pointer-down: handle Space+drag pan or middle-button pan ─────────────
   const handleAreaPointerDown = useCallback((e: React.MouseEvent) => {
     if (e.button === 1 || (e.button === 0 && spaceHeldRef.current)) {
       e.preventDefault();
@@ -532,11 +549,29 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     }
   }, []);
 
-  const handleCanvasMouseDown = useCallback(
+  // ── Canvas mouse-down: Move tool drag OR pan if outside canvas ────────────────
+  const handleCanvasAreaMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (spaceHeldRef.current || e.button !== 0) return;
-      if (toolMode === "move" && parsedSVG) {
+      if (toolMode !== "move") return;
+
+      // Check if click is inside the canvas card element
+      const inside = canvasRef.current
+        ? (() => {
+            const rect = canvasRef.current.getBoundingClientRect();
+            return (
+              e.clientX >= rect.left &&
+              e.clientX <= rect.right &&
+              e.clientY >= rect.top &&
+              e.clientY <= rect.bottom
+            );
+          })()
+        : false;
+
+      if (inside && parsedSVG) {
+        // Start glyph drag
         e.preventDefault();
+        moveStartedInCanvasRef.current = true;
         glyphDragRef.current = {
           startX: e.clientX,
           startY: e.clientY,
@@ -545,6 +580,17 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
           adjSnapshot: { ...adj },
         };
         setIsDraggingGlyph(true);
+      } else {
+        // Start pan when clicking outside the canvas card with Move tool
+        e.preventDefault();
+        moveStartedInCanvasRef.current = false;
+        panDragRef.current = {
+          startMouseX: e.clientX,
+          startMouseY: e.clientY,
+          startPanX: viewportRef.current.panX,
+          startPanY: viewportRef.current.panY,
+        };
+        setIsPanning(true);
       }
     },
     [toolMode, parsedSVG, adj],
@@ -580,21 +626,26 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   // ── Glyph drag effect ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isDraggingGlyph) return;
-    const cx = CANVAS_W / 2;
-    const cy = CANVAS_H / 2;
+
+    // FIX: scale-from-bottom — transform origin is at baseline (bottom of glyph)
+    // The outer <g> translates to the baseline point, scales, then translates back.
     const buildT = (offX: number, offY: number) => {
       const snap = glyphDragRef.current!.adjSnapshot;
       const fsx = snap.flipH ? -1 : 1;
       const fsy = snap.flipV ? -1 : 1;
+      // Pivot at the baseline Y on canvas
+      const pivotY = baselineCanvasY + snap.baseline;
+      const pivotX = CANVAS_W / 2;
       return [
-        `translate(${cx}, ${cy})`,
+        `translate(${pivotX}, ${pivotY})`,
         snap.rotate !== 0 ? `rotate(${snap.rotate})` : "",
         `scale(${snap.scaleX * fsx}, ${snap.scaleY * fsy})`,
-        `translate(${-cx + offX}, ${-cy + offY + snap.baseline})`,
+        `translate(${-pivotX + offX}, ${-pivotY + offY + snap.baseline})`,
       ]
         .filter(Boolean)
         .join(" ");
     };
+
     const onMove = (e: MouseEvent) => {
       if (!glyphDragRef.current || !svgGRef.current) return;
       const z = viewportRef.current.zoom;
@@ -608,6 +659,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
       updateSnapLines(axis);
       setSnapAxis(axis);
     };
+
     const onUp = (e: MouseEvent) => {
       if (!glyphDragRef.current) return;
       const snap = glyphDragRef.current.adjSnapshot;
@@ -630,6 +682,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
       setSnapAxis(null);
       updateSnapLines(null);
     };
+
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
@@ -713,24 +766,26 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     updateAdjustments(codepoint, n);
   };
 
-  // ── SVG transform ─────────────────────────────────────────────────────────────
-  const cx = CANVAS_W / 2;
-  const cy = CANVAS_H / 2;
+  // ── SVG transform — FIX: pivot at baseline, scales upward ────────────────────
   const adjustTransform = useMemo(() => {
     if (!parsedSVG) return "";
     const fsx = adj.flipH ? -1 : 1;
     const fsy = adj.flipV ? -1 : 1;
+    // Pivot point: baseline Y on canvas, horizontal center
+    const pivotX = CANVAS_W / 2;
+    const pivotY = baselineCanvasY + adj.baseline;
     return [
-      `translate(${cx}, ${cy})`,
+      `translate(${pivotX}, ${pivotY})`,
       adj.rotate !== 0 ? `rotate(${adj.rotate})` : "",
       `scale(${adj.scaleX * fsx}, ${adj.scaleY * fsy})`,
-      `translate(${-cx + adj.offsetX}, ${-cy + adj.offsetY + adj.baseline})`,
+      `translate(${-pivotX + adj.offsetX}, ${-pivotY + adj.offsetY + adj.baseline})`,
     ]
       .filter(Boolean)
       .join(" ");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adj, parsedSVG]);
 
+  // ── Cursor logic ──────────────────────────────────────────────────────────────
   const canvasCursor = isPanning
     ? "grabbing"
     : spaceHeldRef.current
@@ -740,9 +795,11 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
           ? "grabbing"
           : "grab"
         : "default";
+
   const zoomPct = Math.round(viewport.zoom * 100);
   const scaleXPct = Math.round(adj.scaleX * 100);
   const scaleYPct = Math.round(adj.scaleY * 100);
+
   const handleScaleXPct = (pct: number) => {
     const v = Math.max(10, Math.min(300, pct)) / 100;
     update(scaleLocked ? { scaleX: v, scaleY: v } : { scaleX: v });
@@ -895,19 +952,31 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
 
       {/* ── Body ── */}
       <div className={styles.body}>
-        {/* ══════════════════════════════════════════════════════════════════════
-            Canvas area — fills all available space, clips zoom layer
-        ══════════════════════════════════════════════════════════════════════ */}
+        {/* Canvas area — FIX: onMouseDown on the AREA handles both Move+outside pan and Space pan */}
         <div
           ref={canvasAreaRef}
           className={styles.canvasArea}
-          onMouseDown={handleAreaPointerDown}
+          onMouseDown={(e) => {
+            // Space/middle-button panning takes priority
+            if (e.button === 1 || (e.button === 0 && spaceHeldRef.current)) {
+              handleAreaPointerDown(e);
+              return;
+            }
+            // Move tool: handle inside/outside canvas
+            if (toolMode === "move" && e.button === 0) {
+              handleCanvasAreaMouseDown(e);
+            }
+          }}
           style={{
             cursor: isPanning
               ? "grabbing"
               : spaceHeldRef.current
                 ? "grab"
-                : undefined,
+                : toolMode === "move"
+                  ? isDraggingGlyph
+                    ? "grabbing"
+                    : "grab"
+                  : undefined,
           }}
         >
           {/* Tool palette */}
@@ -932,7 +1001,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             <button
               className={`${styles.toolBtn} ${toolMode === "move" ? styles.toolBtnActive : ""}`}
               onClick={() => setToolMode("move")}
-              title="Move glyph (M) — snaps to X/Y"
+              title="Move glyph (M) — drag canvas to pan when outside glyph"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
@@ -976,7 +1045,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             </button>
           </div>
 
-          {/* ── Zoom controls (bottom-left, Figma-style) ── */}
+          {/* Zoom controls */}
           <div className={styles.zoomControls}>
             <button
               className={styles.zoomBtn}
@@ -1039,7 +1108,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             </button>
           </div>
 
-          {/* ── Keyboard hint strip (appears when not at 100%) ── */}
           {viewport.zoom !== 1 && (
             <div className={styles.zoomHint}>
               <kbd>Ctrl+scroll</kbd> zoom · <kbd>Space</kbd>+drag pan ·{" "}
@@ -1047,9 +1115,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             </div>
           )}
 
-          {/* ══════════════════════════════════════════════════════════════════
-              Zoom layer — the canvas card lives here, translated + scaled
-          ══════════════════════════════════════════════════════════════════ */}
+          {/* Zoom layer */}
           <div
             className={styles.zoomLayer}
             style={{
@@ -1067,7 +1133,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                 height: CANVAS_H,
                 cursor: canvasCursor,
               }}
-              onMouseDown={handleCanvasMouseDown}
             >
               {/* Guides */}
               {GUIDE_LINES.map(
@@ -1231,13 +1296,12 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                 </button>
               )}
 
-              {/* Tool hints — font scaled inverse to viewport zoom so they stay legible */}
               {toolMode === "move" && !isDraggingGlyph && (
                 <div
                   className={styles.toolHint}
                   style={{ fontSize: `${11 / viewport.zoom}px` }}
                 >
-                  Drag to reposition — snaps to X / Y axis
+                  Drag glyph to move · drag canvas area to pan
                 </div>
               )}
               {toolMode === "guides" && !draggingGuideKey && (
@@ -1264,7 +1328,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
           </div>
           {/* end zoomLayer */}
 
-          {/* Canvas info — outside zoom layer, always same size */}
+          {/* FIX: canvas info bar — fixed at bottom of canvasArea */}
           <div className={styles.canvasInfo}>
             <span>Em: 1000 UPM</span>
             <span>Advance: {adj.advanceWidth}u</span>
@@ -1299,17 +1363,24 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
           <div className={styles.tabContent}>
             {activeTab === "transform" && (
               <div className={styles.section}>
+                {/* Scale X with prominent lock button */}
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Scale X</span>
+                    {/* FIX: prominent lock button, active by default */}
                     <button
                       className={`${styles.lockBtn} ${scaleLocked ? styles.lockBtnActive : ""}`}
                       onClick={() => setScaleLocked((l) => !l)}
+                      title={
+                        scaleLocked
+                          ? "Unlink X/Y scale"
+                          : "Link X/Y scale (proportional)"
+                      }
                     >
                       {scaleLocked ? (
                         <svg
-                          width="10"
-                          height="10"
+                          width="11"
+                          height="11"
                           viewBox="0 0 11 11"
                           fill="none"
                         >
@@ -1320,19 +1391,19 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                             height="5"
                             rx="1"
                             stroke="currentColor"
-                            strokeWidth="1.2"
+                            strokeWidth="1.3"
                           />
                           <path
                             d="M3.5 5V3.5a2 2 0 0 1 4 0V5"
                             stroke="currentColor"
-                            strokeWidth="1.2"
+                            strokeWidth="1.3"
                             strokeLinecap="round"
                           />
                         </svg>
                       ) : (
                         <svg
-                          width="10"
-                          height="10"
+                          width="11"
+                          height="11"
                           viewBox="0 0 11 11"
                           fill="none"
                         >
@@ -1343,12 +1414,12 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                             height="5"
                             rx="1"
                             stroke="currentColor"
-                            strokeWidth="1.2"
+                            strokeWidth="1.3"
                           />
                           <path
                             d="M3.5 5V3a2 2 0 0 1 4 0"
                             stroke="currentColor"
-                            strokeWidth="1.2"
+                            strokeWidth="1.3"
                             strokeLinecap="round"
                           />
                         </svg>
@@ -1384,6 +1455,8 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </div>
                   </div>
                 </div>
+
+                {/* Scale Y */}
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Scale Y</span>
@@ -1443,7 +1516,10 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </div>
                   </div>
                 </div>
+
                 <div className={styles.sectionDivider} />
+
+                {/* Offset X */}
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Offset X</span>
@@ -1474,6 +1550,8 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     />
                   </div>
                 </div>
+
+                {/* Offset Y */}
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Offset Y</span>
@@ -1504,7 +1582,10 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     />
                   </div>
                 </div>
+
                 <div className={styles.sectionDivider} />
+
+                {/* Rotate */}
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Rotate</span>
@@ -1538,6 +1619,8 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </div>
                   </div>
                 </div>
+
+                {/* Baseline shift */}
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Baseline shift</span>
@@ -1568,7 +1651,10 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     />
                   </div>
                 </div>
+
                 <div className={styles.sectionDivider} />
+
+                {/* Flip */}
                 <div className={styles.fieldGroup}>
                   <span className={styles.fieldLabel}>Flip</span>
                   <div className={styles.flipRow}>
@@ -1614,6 +1700,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </button>
                   </div>
                 </div>
+
                 <button className={styles.resetBtn} onClick={resetAdj}>
                   Reset to fit guidelines
                 </button>

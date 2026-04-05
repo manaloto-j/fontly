@@ -195,7 +195,7 @@
   justify-content: center;
   gap: 12px;
   background: var(--bg-2);
-  padding: 28px;
+  padding: 28px 28px 48px; /* bottom padding for the info bar */
   overflow: hidden;
   position: relative;
 }
@@ -291,11 +291,9 @@
   transition: opacity 0.1s;
 }
 
-/* When guides tool is active, make lines interactive */
 .guideLineDraggable {
   pointer-events: all;
   cursor: ns-resize;
-  /* Expand hit area vertically */
   padding: 6px 0;
   margin: -6px 0;
   opacity: 0.7;
@@ -310,7 +308,6 @@
   z-index: 15 !important;
 }
 
-/* The 1px colored line inside the hit area */
 .guideLine::before {
   content: "";
   position: absolute;
@@ -322,7 +319,6 @@
   transform: translateY(-50%);
 }
 
-/* When draggable, thicken line slightly on hover */
 .guideLineDraggable:hover::before {
   height: 2px;
 }
@@ -345,7 +341,6 @@
   pointer-events: none;
 }
 
-/* Drag handle dots shown when guides tool active */
 .guideDragHandle {
   position: absolute;
   left: 8px;
@@ -457,7 +452,7 @@
 /* ── Tool hint ── */
 .toolHint {
   position: absolute;
-  bottom: 10px;
+  bottom: 54px; /* above the info bar */
   left: 50%;
   transform: translateX(-50%);
   font-size: 11px;
@@ -485,7 +480,12 @@
   }
 }
 
+/* ── Canvas info bar — fixed to bottom of canvasArea ── */
 .canvasInfo {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -493,11 +493,11 @@
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
   background: var(--surface);
-  border: 1px solid var(--border);
-  padding: 6px 14px;
-  border-radius: var(--radius-md);
-  position: relative;
-  z-index: 1;
+  border-top: 1px solid var(--border);
+  padding: 6px 16px;
+  z-index: 40;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 /* ── Controls panel ── */
@@ -558,7 +558,6 @@
   gap: 5px;
 }
 
-/* Row that holds the label + unit/badge on the right */
 .fieldLabelRow {
   display: flex;
   align-items: center;
@@ -574,7 +573,6 @@
   color: var(--text-tertiary);
 }
 
-/* Subtle unit tag on the right of the label row */
 .fieldUnit {
   font-size: 10px;
   font-weight: 400;
@@ -584,7 +582,6 @@
   opacity: 0.6;
 }
 
-/* Thin divider between field groups / sections */
 .sectionDivider {
   height: 1px;
   background: var(--border);
@@ -631,7 +628,6 @@
   transform: scale(1.2);
 }
 
-/* Wrapper for input + inline unit suffix (%, °) */
 .numInputWrap {
   display: flex;
   align-items: center;
@@ -659,10 +655,8 @@
   padding: 0 4px 0 7px;
   outline: none;
   font-variant-numeric: tabular-nums;
-  /* When used standalone (no wrap) */
 }
 
-/* standalone numInput (Offset X/Y, baseline, spacing) */
 .numInput:not(.numInputWrap *) {
   width: 58px;
   height: 28px;
@@ -688,7 +682,7 @@
   line-height: 28px;
 }
 
-/* Linked badge shown next to Scale Y when locked — matches the Lock button style */
+/* ── Scale lock — PROMINENT linked badge ── */
 .linkedBadge {
   display: inline-flex;
   align-items: center;
@@ -852,7 +846,6 @@
   color: var(--text-primary);
 }
 
-/* Y position readout in guides tab */
 .guideYVal {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
@@ -899,30 +892,34 @@
   margin: 2px 0;
 }
 
-/* ── Scale lock button ── */
+/* ── Scale lock button — PROMINENT ── */
 .lockBtn {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text-tertiary);
-  background: transparent;
-  border: 1px solid var(--border);
-  padding: 2px 6px;
-  border-radius: 4px;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg);
+  border: 1.5px solid var(--border-strong);
+  padding: 3px 8px;
+  border-radius: 5px;
   transition: all 0.12s;
   cursor: pointer;
+  letter-spacing: 0.02em;
 }
 .lockBtn:hover {
   background: var(--highlight);
   color: var(--text-primary);
   border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
 }
+/* Active = linked: bold accent pill */
 .lockBtnActive {
   background: var(--accent);
   border-color: var(--accent);
   color: white;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }
 .lockBtnActive:hover {
   background: var(--accent-hover);
@@ -930,137 +927,19 @@
   color: white;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   Append these rules to src/components/GlyphEditor.module.css
-   ───────────────────────────────────────────────────────────────────────────── */
-
-/* ── Snap indicator: vertical line (X-axis snap) ── */
-.snapLineX {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  /* offset so the 1px line is centred on the coordinate */
-  transform: translateX(-50%);
-  background: #3b82f6;
-  opacity: 0.7;
-  pointer-events: none;
-  z-index: 20;
-  /* dashed via repeating-linear-gradient for a crisp look */
-  background: repeating-linear-gradient(
-    to bottom,
-    #3b82f6 0px,
-    #3b82f6 6px,
-    transparent 6px,
-    transparent 10px
-  );
-}
-
-/* ── Snap indicator: horizontal line (Y-axis snap) ── */
-.snapLineY {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 1px;
-  transform: translateY(-50%);
-  pointer-events: none;
-  z-index: 20;
-  background: repeating-linear-gradient(
-    to right,
-    #3b82f6 0px,
-    #3b82f6 6px,
-    transparent 6px,
-    transparent 10px
-  );
-  opacity: 0.7;
-}
-
-/* ── Origin snap dot (both axes) ── */
-.snapOriginDot {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #3b82f6;
-  /* centre it on the coordinate */
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  z-index: 21;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
-  animation: snapPulse 0.4s ease;
-}
-
-@keyframes snapPulse {
-  0% {
-    transform: translate(-50%, -50%) scale(0.5);
-    opacity: 0.5;
-  }
-  60% {
-    transform: translate(-50%, -50%) scale(1.4);
-    opacity: 1;
-  }
-  100% {
-    transform: translate(-50%, -50%) scale(1);
-    opacity: 1;
-  }
-}
-
-/* ── Snap label shown during drag ── */
-.snapLabel {
-  position: absolute;
-  bottom: 44px; /* above the tool-hint */
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 11px;
-  font-weight: 600;
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  padding: 4px 12px;
-  border-radius: 99px;
-  white-space: nowrap;
-  z-index: 25;
-  pointer-events: none;
-  letter-spacing: 0.04em;
-  animation: snapLabelIn 0.15s ease;
-}
-
-@keyframes snapLabelIn {
-  from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════════
-   Append these rules to src/components/GlyphEditor.module.css
-   ═══════════════════════════════════════════════════════════════════════════════
-
-   ALSO: Update .canvasArea — add these two lines to the existing rule:
-       overflow: hidden;
-       position: relative;
-   (It already has position: relative in some builds, just ensure overflow:hidden)
-   ═══════════════════════════════════════════════════════════════════════════════ */
-
-/* ── The zoom/pan layer that holds the canvas card ── */
+/* ── Zoom layer ── */
 .zoomLayer {
   position: absolute;
   top: 0;
   left: 0;
-  /* width/height set inline to CANVAS_W × CANVAS_H */
   will-change: transform;
-  /* Smooth zoom feel */
-  transition: none; /* real-time: no CSS transition during wheel/drag */
+  transition: none;
 }
 
-/* ── Zoom controls toolbar (bottom-left of canvasArea) ── */
+/* ── Zoom controls toolbar ── */
 .zoomControls {
   position: absolute;
-  bottom: 48px; /* sits above canvasInfo bar */
+  bottom: 52px; /* sits above the info bar */
   left: 16px;
   z-index: 40;
   display: flex;
@@ -1097,7 +976,6 @@
   cursor: not-allowed;
 }
 
-/* Clickable zoom percentage label */
 .zoomLevel {
   font-size: 11.5px;
   font-weight: 600;
@@ -1150,7 +1028,7 @@
 /* ── Keyboard shortcut hint bar ── */
 .zoomHint {
   position: absolute;
-  bottom: 48px;
+  bottom: 52px; /* above info bar */
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
@@ -1189,45 +1067,38 @@
   }
 }
 
-/* ── Snap indicator: vertical dashed line (X-axis snap) ── */
+/* ── Snap indicators ── */
 .snapLineX {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
+  width: 2px;
   transform: translateX(-50%);
   pointer-events: none;
-  z-index: 20;
-  background: repeating-linear-gradient(
-    to bottom,
-    #3b82f6 0px,
-    #3b82f6 6px,
-    transparent 6px,
-    transparent 10px
-  );
-  opacity: 0.75;
+  z-index: 22;
+  animation: snapLineAppear 0.1s ease;
 }
 
-/* ── Snap indicator: horizontal dashed line (Y-axis snap) ── */
 .snapLineY {
   position: absolute;
   left: 0;
   right: 0;
-  height: 1px;
+  height: 2px;
   transform: translateY(-50%);
   pointer-events: none;
-  z-index: 20;
-  background: repeating-linear-gradient(
-    to right,
-    #3b82f6 0px,
-    #3b82f6 6px,
-    transparent 6px,
-    transparent 10px
-  );
-  opacity: 0.75;
+  z-index: 22;
+  animation: snapLineAppear 0.1s ease;
 }
 
-/* ── Origin snap dot ── */
+@keyframes snapLineAppear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .snapOriginDot {
   position: absolute;
   width: 10px;
@@ -1255,29 +1126,28 @@
   }
 }
 
-/* ── Snap axis label ── */
 .snapLabel {
   position: absolute;
-  bottom: 44px;
+  bottom: 52px; /* above info bar */
   left: 50%;
   transform: translateX(-50%);
   font-size: 11px;
   font-weight: 600;
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  padding: 4px 12px;
+  padding: 4px 14px;
   border-radius: 99px;
   white-space: nowrap;
-  z-index: 25;
+  z-index: 30;
   pointer-events: none;
   letter-spacing: 0.04em;
+  border: 1px solid;
   animation: snapLabelIn 0.15s ease;
+  backdrop-filter: blur(4px);
 }
+
 @keyframes snapLabelIn {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(4px);
+    transform: translateX(-50%) translateY(6px);
   }
   to {
     opacity: 1;
@@ -1285,20 +1155,12 @@
   }
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   APPEND THIS BLOCK to the END of src/components/GlyphEditor.module.css
-   ═══════════════════════════════════════════════════════════════════
-
-   Guide line snap feature styles
-   ═══════════════════════════════════════════════════════════════════ */
-
-/* ── Snapped guide line — pulsing highlight ── */
+/* ── Guide snap styles ── */
 .guideLineSnapped {
   opacity: 1 !important;
   z-index: 16 !important;
 }
 
-/* The coloured fill bar inside the guide line */
 .vizLineFillCanvas {
   flex: 1;
   height: 1px;
@@ -1314,7 +1176,6 @@
   opacity: 1;
 }
 
-/* Guide label */
 .guideLabelSnapped {
   font-weight: 700 !important;
   font-size: 10px !important;
@@ -1335,7 +1196,6 @@
   }
 }
 
-/* Pulse dot emitted from the snap point on the guide line */
 .guideSnapPulse {
   position: absolute;
   left: 50%;
@@ -1363,38 +1223,6 @@
   }
 }
 
-/* ── Snap label — coloured, above the hint ── */
-/* (overrides the generic .snapLabel in the existing CSS) */
-.snapLabel {
-  position: absolute;
-  bottom: 52px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 4px 14px;
-  border-radius: 99px;
-  white-space: nowrap;
-  z-index: 30;
-  pointer-events: none;
-  letter-spacing: 0.04em;
-  border: 1px solid;
-  animation: snapLabelIn 0.15s ease;
-  backdrop-filter: blur(4px);
-}
-
-@keyframes snapLabelIn {
-  from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-  }
-}
-
-/* ── Info box in the Snap tab ── */
 .snapHintBox {
   display: flex;
   align-items: flex-start;
@@ -1418,7 +1246,6 @@
   margin-top: 1px;
 }
 
-/* ── Quick snap buttons ── */
 .snapQuickLabel {
   font-size: 10.5px;
   font-weight: 500;
@@ -1456,7 +1283,6 @@
   background: var(--highlight);
   border-color: var(--border-strong);
   color: var(--text-primary);
-  /* Subtle left accent using snap color */
   border-left: 3px solid var(--snap-color, var(--border-strong));
   padding-left: 8px;
 }
@@ -1466,36 +1292,4 @@
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-}
-
-/* ── Snap indicator lines (coloured to match guide) ── */
-.snapLineX {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  transform: translateX(-50%);
-  pointer-events: none;
-  z-index: 22;
-  animation: snapLineAppear 0.1s ease;
-}
-
-.snapLineY {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  transform: translateY(-50%);
-  pointer-events: none;
-  z-index: 22;
-  animation: snapLineAppear 0.1s ease;
-}
-
-@keyframes snapLineAppear {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
 }
