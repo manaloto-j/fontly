@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useFontStore } from '../store/useFontStore'
 import { CHAR_GROUPS, toCodepoint } from '../constants/charsets'
 import { GlyphAdjustments } from '../types/font'
@@ -36,7 +36,50 @@ const DEFAULT_ADJUSTMENTS: GlyphAdjustments = {
   leftBearing: 50,
 }
 
-// ── Local history for undo within glyph editor ────────────────────────────────
+// ── Parse SVG string → extract inner content + viewBox ────────────────────────
+function parseSVGContent(svgString: string): {
+  innerContent: string
+  viewBox: string
+  width: number
+  height: number
+  aspectRatio: number
+} {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(svgString, 'image/svg+xml')
+  const svg = doc.querySelector('svg')
+
+  if (!svg) return { innerContent: svgString, viewBox: '0 0 100 100', width: 100, height: 100, aspectRatio: 1 }
+
+  // Get viewBox
+  let viewBox = svg.getAttribute('viewBox') ?? ''
+  let vbX = 0, vbY = 0, vbW = 100, vbH = 100
+
+  if (viewBox) {
+    const parts = viewBox.trim().split(/[\s,]+/).map(Number)
+    if (parts.length === 4) {
+      ;[vbX, vbY, vbW, vbH] = parts
+    }
+  } else {
+    vbW = parseFloat(svg.getAttribute('width') ?? '100') || 100
+    vbH = parseFloat(svg.getAttribute('height') ?? '100') || 100
+    viewBox = `0 0 ${vbW} ${vbH}`
+  }
+
+  const aspectRatio = vbW / vbH
+
+  // Extract inner content (everything inside <svg>...</svg>)
+  const innerContent = svg.innerHTML
+
+  return {
+    innerContent,
+    viewBox,
+    width: vbW,
+    height: vbH,
+    aspectRatio,
+  }
+}
+
+// ── Local history for per-editor undo ─────────────────────────────────────────
 function useAdjustmentHistory(initial: GlyphAdjustments) {
   const [stack, setStack] = useState<GlyphAdjustments[]>([initial])
   const [index, setIndex] = useState(0)
@@ -84,7 +127,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   const glyph = glyphs[codepoint]
   const storedAdj: GlyphAdjustments = { ...DEFAULT_ADJUSTMENTS, ...(glyph?.adjustments ?? {}) }
 
-  // Local adjustment history for per-editor Ctrl+Z
   const adjHistory = useAdjustmentHistory(storedAdj)
   const adj = adjHistory.current
 
@@ -100,6 +142,12 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   const [activeTab, setActiveTab] = useState<'transform' | 'spacing' | 'guides'>('transform')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // ── Parse the SVG content once per glyph ─────────────────────────────────
+  const parsedSVG = useMemo(() => {
+    if (!glyph?.svgContent) return null
+    return parseSVGContent(glyph.svgContent)
+  }, [glyph?.svgContent])
+
   const goTo = useCallback((dir: -1 | 1) => {
     const nextIndex = currentIndex + dir
     if (nextIndex < 0 || nextIndex >= orderedCps.length) return
@@ -107,7 +155,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     window.dispatchEvent(event)
   }, [currentIndex, orderedCps])
 
-  // Keyboard shortcuts — Ctrl+Z / Ctrl+Y for local undo in editor
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const ctrl = e.ctrlKey || e.metaKey
@@ -115,10 +162,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
       if (e.key === 'ArrowLeft' && (e.ctrlKey || e.metaKey || e.altKey)) { e.preventDefault(); goTo(-1) }
       if (e.key === 'ArrowRight' && (e.ctrlKey || e.metaKey || e.altKey)) { e.preventDefault(); goTo(1) }
 
-      // Local undo/redo for adjustments
       if (ctrl && e.key === 'z' && !e.shiftKey) {
         e.preventDefault()
-        e.stopPropagation() // prevent global undo
+        e.stopPropagation()
         const prev = adjHistory.undo()
         if (prev) updateAdjustments(codepoint, prev)
       }
@@ -133,7 +179,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     return () => window.removeEventListener('keydown', handler, { capture: true })
   }, [onClose, goTo, adjHistory, codepoint, updateAdjustments])
 
-  // Update both local history and store
   const update = (patch: Partial<GlyphAdjustments>) => {
     const next = { ...adj, ...patch }
     adjHistory.push(next)
@@ -155,29 +200,49 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     updateAdjustments(codepoint, DEFAULT_ADJUSTMENTS)
   }
 
-  // ── Build SVG transform for live preview ────────────────────────────────────
-  // Use SVG-native transform on the wrapper for accurate visual representation
-  // that matches what the export engine will produce.
   const CANVAS_W = 480
   const CANVAS_H = 520
-
-  // Center of canvas for transform origin
   const cx = CANVAS_W / 2
   const cy = CANVAS_H / 2
 
-  // Build SVG transform string applied to a <g> wrapping the SVG content.
-  // Order: translate(offset) → rotate(around center) → scale(around center) → flip
-  const buildSVGTransform = () => {
-    const parts: string[] = []
+  // ── Build inline SVG transform ────────────────────────────────────────────
+  // Computes the transform group that wraps the glyph content inside the canvas SVG.
+  // Strategy:
+  //   1. Fit the glyph's viewBox into the canvas with preserved aspect ratio (xMidYMid meet)
+  //   2. Apply user adjustments (scale, offset, rotate, flip) around the canvas center
+  const buildInlineSVGTransform = (): { fitTransform: string; adjustTransform: string; fitW: number; fitH: number } => {
+    if (!parsedSVG) return { fitTransform: '', adjustTransform: '', fitW: CANVAS_W, fitH: CANVAS_H }
 
-    // Translate to center, apply transforms, translate back
-    parts.push(`translate(${cx}, ${cy})`)
-    if (adj.rotate !== 0) parts.push(`rotate(${adj.rotate})`)
-    parts.push(`scale(${adj.scaleX * (adj.flipH ? -1 : 1)}, ${adj.scaleY * (adj.flipV ? -1 : 1)})`)
-    parts.push(`translate(${-cx + adj.offsetX}, ${-cy + adj.offsetY})`)
+    const padding = 40 // px padding inside canvas
+    const availW = CANVAS_W - padding * 2
+    const availH = CANVAS_H - padding * 2
 
-    return parts.join(' ')
+    // Scale to fit while preserving aspect ratio
+    const scaleToFit = Math.min(availW / parsedSVG.width, availH / parsedSVG.height)
+    const fitW = parsedSVG.width * scaleToFit
+    const fitH = parsedSVG.height * scaleToFit
+
+    // Center the fitted glyph in the canvas
+    const fitX = (CANVAS_W - fitW) / 2
+    const fitY = (CANVAS_H - fitH) / 2
+
+    // Transform 1: position + scale the SVG content to fit canvas
+    const fitTransform = `translate(${fitX}, ${fitY}) scale(${scaleToFit})`
+
+    // Transform 2: user adjustments applied around canvas center
+    const flipScaleX = adj.flipH ? -1 : 1
+    const flipScaleY = adj.flipV ? -1 : 1
+    const adjustTransform = [
+      `translate(${cx}, ${cy})`,
+      adj.rotate !== 0 ? `rotate(${adj.rotate})` : '',
+      `scale(${adj.scaleX * flipScaleX}, ${adj.scaleY * flipScaleY})`,
+      `translate(${-cx + adj.offsetX}, ${-cy + adj.offsetY + adj.baseline})`,
+    ].filter(Boolean).join(' ')
+
+    return { fitTransform, adjustTransform, fitW, fitH }
   }
+
+  const { fitTransform, adjustTransform } = buildInlineSVGTransform()
 
   return (
     <div className={styles.root}>
@@ -206,7 +271,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
           </div>
         </div>
 
-        {/* Local undo/redo indicators */}
         <div className={styles.localUndoRow}>
           <button
             className={styles.localUndoBtn}
@@ -289,26 +353,35 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
               />
             )}
 
-            {/* SVG content — rendered as an inline SVG so transforms are native */}
-            {glyph?.svgContent ? (
+            {/* ── Inline SVG rendering ── */}
+            {parsedSVG ? (
               <div className={styles.svgWrapper}>
                 <svg
                   width={CANVAS_W}
                   height={CANVAS_H}
                   viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
-                  style={{ position: 'absolute', inset: 0 }}
+                  style={{ position: 'absolute', inset: 0, overflow: 'visible' }}
+                  aria-label={`Glyph preview for ${char}`}
                 >
-                  <g transform={buildSVGTransform()}>
-                    {/* Embed the glyph SVG content via foreignObject workaround:
-                        We parse and inline the SVG's inner content */}
-                    <image
-                      href={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(glyph.svgContent)}`}
+                  {/*
+                    Two-level transform:
+                    1. adjustTransform — user controls (scale, rotate, flip, offset) around canvas center
+                    2. fitTransform    — scales the SVG's own coordinate space to fill the canvas
+                    The inner <svg> re-establishes the glyph's viewBox so its paths render correctly.
+                  */}
+                  <g transform={adjustTransform}>
+                    <svg
                       x={0}
                       y={0}
                       width={CANVAS_W}
                       height={CANVAS_H}
+                      viewBox={parsedSVG.viewBox}
                       preserveAspectRatio="xMidYMid meet"
-                    />
+                      overflow="visible"
+                    >
+                      {/* Inline the raw SVG inner content safely */}
+                      <g dangerouslySetInnerHTML={{ __html: parsedSVG.innerContent }} />
+                    </svg>
                   </g>
                 </svg>
               </div>
@@ -337,13 +410,18 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             )}
           </div>
 
-          {/* Canvas bottom info bar */}
+          {/* Canvas info bar */}
           <div className={styles.canvasInfo}>
             <span>Em: 1000 UPM</span>
             <span>Advance: {adj.advanceWidth}u</span>
             <span>LSB: {adj.leftBearing}u</span>
             <span>Rotate: {adj.rotate}°</span>
             <span>Scale: {adj.scaleX.toFixed(2)}×{adj.scaleY.toFixed(2)}</span>
+            {parsedSVG && (
+              <span style={{ color: 'var(--text-tertiary)', opacity: 0.6 }}>
+                vb: {parsedSVG.viewBox}
+              </span>
+            )}
           </div>
         </div>
 
@@ -462,7 +540,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                   </div>
                 </div>
 
-                {/* Flip buttons */}
                 <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>Flip</label>
                   <div className={styles.flipRow}>
@@ -543,7 +620,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                   </div>
                 </div>
 
-                {/* Spacing visualizer */}
                 <div className={styles.spacingViz}>
                   <div className={styles.spacingTrack}>
                     <div

@@ -1,29 +1,31 @@
-/* ── Overlay ── */
 .overlay {
   position: fixed;
   inset: 0;
   z-index: 90;
 }
 
-/* ── Panel ── */
+/* ── Panel — fixed to right edge, never overflows ── */
 .panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: 500px;
+  position: fixed;
+  top: 56px; /* below navbar height */
+  right: 12px;
+  width: 480px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 68px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   z-index: 100;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
   animation: panelIn 0.18s ease;
 }
 
 @keyframes panelIn {
-  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ── Tabs ── */
@@ -31,6 +33,7 @@
   display: flex;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
+  flex-shrink: 0;
 }
 
 .tab {
@@ -56,11 +59,11 @@
   background: var(--surface) !important;
 }
 
-/* ── Tab content ── */
+/* ── Tab content — scrollable ── */
 .content {
   padding: 18px 20px;
-  max-height: 500px;
   overflow-y: auto;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -348,7 +351,7 @@
   border-radius: var(--radius-sm);
 }
 
-/* ── Missing uppercase display ── */
+/* ── Missing uppercase ── */
 .missingGrid {
   display: flex;
   flex-wrap: wrap;
@@ -587,7 +590,7 @@
   border-color: #b45309;
 }
 
-/* ── Navbar trigger button ── */
+/* ── Navbar trigger button — renamed to "Export & Settings" ── */
 .navTrigger {
   display: flex;
   align-items: center;
@@ -602,6 +605,7 @@
   border-radius: var(--radius-sm);
   transition: all 0.12s;
   position: relative;
+  white-space: nowrap;
 }
 
 .navTrigger:hover {
@@ -614,4 +618,13 @@
   background: var(--highlight);
   border-color: var(--border-strong);
   color: var(--text-primary);
+}
+
+/* Export badge dot on trigger */
+.exportDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4caf7d;
+  flex-shrink: 0;
 }

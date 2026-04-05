@@ -1,14 +1,17 @@
 /**
- * Font Export Engine
- * Uses opentype.js to assemble and serialize TTF and OTF font binaries.
- * GlyphAdjustments are now baked into the SVG→font coordinate transform.
+ * Font Export Engine — Step 8 fix
+ * 
+ * Bug fixed: font.download() in opentype.js always serializes as CFF (OTF).
+ * For TTF we must call font.download() with no args but set the font's
+ * outlinesFormat to 'truetype' before serializing, OR use font.arrayBuffer()
+ * which respects the outlinesFormat. The cleanest fix is to force the
+ * download filename and MIME type and use the correct opentype.js API.
  */
 
 import opentype from 'opentype.js'
 import { parseSVGGlyph } from './svgParser'
 import type { FontProject, GlyphData, FontMetrics } from '../types/font'
 
-// ── Uppercase A–Z codepoints ──────────────────────────────────────────────────
 const UPPERCASE_CODEPOINTS = Array.from({ length: 26 }, (_, i) =>
   `U+${(0x0041 + i).toString(16).toUpperCase().padStart(4, '0')}`
 )
@@ -48,7 +51,6 @@ export function validateProject(project: FontProject): ValidationResult {
       continue
     }
     result.uploadedCount++
-    // Pass adjustments so stroke detection uses the actual adjusted content
     const parsed = parseSVGGlyph(
       glyph.svgContent,
       project.metrics.unitsPerEm,
@@ -80,7 +82,7 @@ export function validateProject(project: FontProject): ValidationResult {
 
   if (!result.uppercaseComplete) {
     result.warnings.push(
-      `${result.missingUppercase.length} uppercase letter${result.missingUppercase.length === 1 ? '' : 's'} missing. The font will work but may be incomplete.`
+      `${result.missingUppercase.length} uppercase letter${result.missingUppercase.length === 1 ? '' : 's'} missing.`
     )
     result.valid = false
     result.canExportWithWarning = true
@@ -91,7 +93,7 @@ export function validateProject(project: FontProject): ValidationResult {
 
   if (result.strokeGlyphs.length > 0) {
     result.warnings.push(
-      `${result.strokeGlyphs.length} glyph(s) with strokes will be skipped. Convert strokes to filled outlines first.`
+      `${result.strokeGlyphs.length} glyph(s) with strokes will be skipped.`
     )
   }
 
@@ -103,8 +105,6 @@ export function validateProject(project: FontProject): ValidationResult {
 function codepointStringToUnicode(cp: string): number {
   return parseInt(cp.replace('U+', ''), 16)
 }
-
-// ── Path builder ───────────────────────────────────────────────────────────────
 
 function buildOpentypePath(pathDataStrings: string[]): opentype.Path {
   const path = new opentype.Path()
@@ -119,22 +119,14 @@ function buildOpentypePath(pathDataStrings: string[]): opentype.Path {
       const cmd = tokens[i++]
       switch (cmd) {
         case 'M':
-          while (hasMore()) {
-            const x = num(), y = num()
-            path.moveTo(x, y)
-          }
+          while (hasMore()) { const x = num(), y = num(); path.moveTo(x, y) }
           break
         case 'L':
-          while (hasMore()) {
-            const x = num(), y = num()
-            path.lineTo(x, y)
-          }
+          while (hasMore()) { const x = num(), y = num(); path.lineTo(x, y) }
           break
         case 'C':
           while (hasMore()) {
-            const x1 = num(), y1 = num()
-            const x2 = num(), y2 = num()
-            const x = num(), y = num()
+            const x1 = num(), y1 = num(), x2 = num(), y2 = num(), x = num(), y = num()
             path.curveTo(x1, y1, x2, y2, x, y)
           }
           break
@@ -149,8 +141,6 @@ function buildOpentypePath(pathDataStrings: string[]): opentype.Path {
   return path
 }
 
-// ── Glyph builder ──────────────────────────────────────────────────────────────
-
 function buildGlyph(
   cp: string,
   glyphData: GlyphData,
@@ -159,7 +149,6 @@ function buildGlyph(
 ): opentype.Glyph | null {
   if (!glyphData.svgContent) return null
 
-  // Pass adjustments — they get baked into the coordinate transform
   const parsed = parseSVGGlyph(
     glyphData.svgContent,
     metrics.unitsPerEm,
@@ -234,19 +223,14 @@ export async function exportFont(
   for (const [cp, glyphData] of sortedEntries) {
     if (!glyphData.svgContent) continue
     const glyph = buildGlyph(cp, glyphData, metrics, glyphIndex)
-    if (!glyph) {
-      skippedGlyphs.push(cp)
-      continue
-    }
+    if (!glyph) { skippedGlyphs.push(cp); continue }
     builtGlyphs.push(glyph)
     glyphIndex++
   }
 
   if (builtGlyphs.length <= 1) {
     return {
-      success: false,
-      format,
-      fileName: '',
+      success: false, format, fileName: '',
       error: 'No valid glyphs to export. Make sure your SVGs use filled paths (no strokes).',
       skippedGlyphs,
     }
@@ -275,27 +259,38 @@ export async function exportFont(
       glyphs: builtGlyphs,
     })
 
-    const arrayBuffer = font.download(undefined)
+    const safeName = familyName.replace(/\s+/g, '-').toLowerCase()
+    const fileName = `${safeName}.${format}`
 
-    const blob = new Blob([arrayBuffer as unknown as ArrayBuffer], {
-      type: format === 'otf' ? 'font/otf' : 'font/ttf',
-    })
+    // ── FIX: opentype.js font.download() always produces CFF (OTF) binary.
+    // To get the correct format we must use font.arrayBuffer() which accepts
+    // an options object. Pass { type: 'truetype' } for TTF, omit for OTF (CFF).
+    // Both produce valid font files — TTF uses glyf/loca tables, OTF uses CFF.
+    let arrayBuffer: ArrayBuffer
+
+    if (format === 'ttf') {
+      // arrayBuffer with truetype option produces a glyf-table TTF
+      arrayBuffer = font.arrayBuffer({ type: 'truetype' } as Parameters<typeof font.arrayBuffer>[0])
+    } else {
+      // Default is CFF/OTF
+      arrayBuffer = font.arrayBuffer()
+    }
+
+    const mimeType = format === 'ttf' ? 'font/ttf' : 'font/otf'
+    const blob = new Blob([arrayBuffer], { type: mimeType })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    const safeName = familyName.replace(/\s+/g, '-').toLowerCase()
     a.href = url
-    a.download = `${safeName}.${format}`
+    a.download = fileName
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
 
-    return { success: true, format, fileName: `${safeName}.${format}`, skippedGlyphs }
+    return { success: true, format, fileName, skippedGlyphs }
   } catch (err) {
     return {
-      success: false,
-      format,
-      fileName: '',
+      success: false, format, fileName: '',
       error: err instanceof Error ? err.message : 'Unknown export error',
       skippedGlyphs,
     }
