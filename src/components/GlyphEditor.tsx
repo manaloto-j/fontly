@@ -37,30 +37,37 @@ const DEFAULT_ADJUSTMENTS: GlyphAdjustments = {
   advanceWidth: 600,
   leftBearing: 50,
 };
-
-const DEFAULT_SPACING = {
-  advanceWidth: DEFAULT_ADJUSTMENTS.advanceWidth,
-  leftBearing: DEFAULT_ADJUSTMENTS.leftBearing,
-};
+const DEFAULT_SPACING = { advanceWidth: 600, leftBearing: 50 };
 
 const CANVAS_W = 480;
 const CANVAS_H = 520;
 const BASELINE_Y = 0.75;
 const CAP_HEIGHT_Y = 0.18;
 
+// ── Canvas viewport zoom ───────────────────────────────────────────────────────
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 8;
+const ZOOM_STEP_KEY = 0.25;
+const ZOOM_WHEEL_K = 0.001; // smooth Figma-like wheel sensitivity
+
+// ── Snap threshold ─────────────────────────────────────────────────────────────
+const SNAP_THRESHOLD = 8;
+type SnapAxis = null | "x" | "y" | "both";
+
 type ToolMode = "select" | "move" | "guides";
 
-function parseSVGContent(svgString: string): {
-  innerContent: string;
-  viewBox: string;
-  width: number;
-  height: number;
-  aspectRatio: number;
-} {
+// ── Viewport state ─────────────────────────────────────────────────────────────
+interface Viewport {
+  zoom: number;
+  panX: number;
+  panY: number;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function parseSVGContent(svgString: string) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svgString, "image/svg+xml");
   const svg = doc.querySelector("svg");
-
   if (!svg)
     return {
       innerContent: svgString,
@@ -69,11 +76,9 @@ function parseSVGContent(svgString: string): {
       height: 100,
       aspectRatio: 1,
     };
-
   let viewBox = svg.getAttribute("viewBox") ?? "";
   let vbW = 100,
     vbH = 100;
-
   if (viewBox) {
     const parts = viewBox
       .trim()
@@ -88,7 +93,6 @@ function parseSVGContent(svgString: string): {
     vbH = parseFloat(svg.getAttribute("height") ?? "100") || 100;
     viewBox = `0 0 ${vbW} ${vbH}`;
   }
-
   return {
     innerContent: svg.innerHTML,
     viewBox,
@@ -103,32 +107,46 @@ function computeAutoFit(parsedSVG: {
   height: number;
   aspectRatio: number;
 }): Partial<GlyphAdjustments> {
+  const capY_px = CAP_HEIGHT_Y * CANVAS_H;
+  const baseY_px = BASELINE_Y * CANVAS_H;
+  const targetH_px = baseY_px - capY_px;
   const padding = 40;
-  const availH = CANVAS_H - padding * 2;
-  const availW = CANVAS_W - padding * 2;
-  const capY = CAP_HEIGHT_Y * CANVAS_H;
-  const baseY = BASELINE_Y * CANVAS_H;
-  const targetH = baseY - capY;
-  const targetW = availW;
-  const scaleToFitH = targetH / availH;
-  const scaleToFitW = targetW / availW;
-  const fitScale = Math.min(scaleToFitH, scaleToFitW);
-  const targetCenterY = capY + targetH / 2;
-  const canvasCenterY = CANVAS_H / 2;
-  const offsetY = -(targetCenterY - canvasCenterY);
+  const availW_px = CANVAS_W - padding * 2;
+  const availH_px = CANVAS_H - padding * 2;
+  const scaleToFit = Math.min(
+    availW_px / parsedSVG.width,
+    availH_px / parsedSVG.height,
+  );
+  const naturalH_px = parsedSVG.height * scaleToFit;
+  const scale = parseFloat((targetH_px / naturalH_px).toFixed(3));
+  const cy = CANVAS_H / 2;
+  const halfH = (naturalH_px * scale) / 2;
+  const offsetY = Math.round(baseY_px - (cy + halfH));
   return {
-    scaleX: Math.round(fitScale * 100) / 100,
-    scaleY: Math.round(fitScale * 100) / 100,
-    offsetY: Math.round(offsetY),
+    scaleX: scale,
+    scaleY: scale,
     offsetX: 0,
+    offsetY,
+    rotate: 0,
     baseline: 0,
+  };
+}
+
+function clampZoom(z: number) {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+}
+
+function centredViewport(containerW: number, containerH: number): Viewport {
+  return {
+    zoom: 1,
+    panX: (containerW - CANVAS_W) / 2,
+    panY: (containerH - CANVAS_H) / 2,
   };
 }
 
 function useAdjustmentHistory(initial: GlyphAdjustments) {
   const [stack, setStack] = useState<GlyphAdjustments[]>([initial]);
   const [index, setIndex] = useState(0);
-
   const push = useCallback(
     (adj: GlyphAdjustments) => {
       setStack((prev) => {
@@ -141,21 +159,18 @@ function useAdjustmentHistory(initial: GlyphAdjustments) {
     },
     [index],
   );
-
   const undo = useCallback(() => {
     if (index <= 0) return null;
-    const newIndex = index - 1;
-    setIndex(newIndex);
-    return stack[newIndex];
+    const ni = index - 1;
+    setIndex(ni);
+    return stack[ni];
   }, [index, stack]);
-
   const redo = useCallback(() => {
     if (index >= stack.length - 1) return null;
-    const newIndex = index + 1;
-    setIndex(newIndex);
-    return stack[newIndex];
+    const ni = index + 1;
+    setIndex(ni);
+    return stack[ni];
   }, [index, stack]);
-
   return {
     current: stack[index],
     push,
@@ -166,6 +181,7 @@ function useAdjustmentHistory(initial: GlyphAdjustments) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   const glyphs = useFontStore((s) => s.project.glyphs);
   const updateAdjustments = useFontStore((s) => s.updateAdjustments);
@@ -182,7 +198,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     ...DEFAULT_ADJUSTMENTS,
     ...(glyph?.adjustments ?? {}),
   };
-
   const adjHistory = useAdjustmentHistory(storedAdj);
   const adj = adjHistory.current;
 
@@ -191,6 +206,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   ).flatMap((g) => g.characters);
   const char = allChars.find((ch) => toCodepoint(ch) === codepoint) ?? "?";
 
+  // ── Guide state ───────────────────────────────────────────────────────────────
   const [visibleGuides, setVisibleGuides] = useState<Record<string, boolean>>({
     ascender: true,
     capHeight: true,
@@ -200,22 +216,39 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     leftBearing: true,
     rightBearing: true,
   });
-
-  // Guide Y positions as fractions (0–1), keyed by guide key
   const [guidePositions, setGuidePositions] = useState<Record<string, number>>(
     Object.fromEntries(GUIDE_LINES.map((g) => [g.key, g.defaultY])),
   );
 
+  // ── UI state ──────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<
     "transform" | "spacing" | "guides"
   >("transform");
   const [scaleLocked, setScaleLocked] = useState(false);
   const [toolMode, setToolMode] = useState<ToolMode>("select");
+
+  // ── Viewport ──────────────────────────────────────────────────────────────────
+  const [viewport, setViewport] = useState<Viewport>({
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+  });
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
+
+  // ── Refs ──────────────────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement>(null);
   const autoFitApplied = useRef(false);
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const svgGRef = useRef<SVGGElement>(null);
+  const snapLineXRef = useRef<HTMLDivElement>(null);
+  const snapLineYRef = useRef<HTMLDivElement>(null);
 
-  // Drag state for move-glyph tool
+  // ── Snap state ────────────────────────────────────────────────────────────────
+  const [snapAxis, setSnapAxis] = useState<SnapAxis>(null);
+
+  // ── Drag: move glyph ─────────────────────────────────────────────────────────
   const glyphDragRef = useRef<{
     startX: number;
     startY: number;
@@ -224,10 +257,18 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     adjSnapshot: GlyphAdjustments;
   } | null>(null);
   const [isDraggingGlyph, setIsDraggingGlyph] = useState(false);
-  // Ref to the SVG <g> element so we can mutate its transform directly (no re-render during drag)
-  const svgGRef = useRef<SVGGElement>(null);
 
-  // Drag state for move-guides tool
+  // ── Drag: pan ─────────────────────────────────────────────────────────────────
+  const panDragRef = useRef<{
+    startMouseX: number;
+    startMouseY: number;
+    startPanX: number;
+    startPanY: number;
+  } | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+  const spaceHeldRef = useRef(false);
+
+  // ── Drag: guides ─────────────────────────────────────────────────────────────
   const guideDragRef = useRef<{
     key: string;
     startMouseY: number;
@@ -235,12 +276,20 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   } | null>(null);
   const [draggingGuideKey, setDraggingGuideKey] = useState<string | null>(null);
 
+  // ── Parsed SVG ────────────────────────────────────────────────────────────────
   const parsedSVG = useMemo(() => {
     if (!glyph?.svgContent) return null;
     return parseSVGContent(glyph.svgContent);
   }, [glyph?.svgContent]);
 
-  // Auto-fit on first upload
+  // ── Init viewport centred ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!canvasAreaRef.current) return;
+    const { width, height } = canvasAreaRef.current.getBoundingClientRect();
+    if (width && height) setViewport(centredViewport(width, height));
+  }, []);
+
+  // ── Auto-fit ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!parsedSVG || autoFitApplied.current) return;
     const isDefault =
@@ -263,52 +312,176 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
 
   const goTo = useCallback(
     (dir: -1 | 1) => {
-      const nextIndex = currentIndex + dir;
-      if (nextIndex < 0 || nextIndex >= orderedCps.length) return;
+      const ni = currentIndex + dir;
+      if (ni < 0 || ni >= orderedCps.length) return;
       window.dispatchEvent(
-        new CustomEvent("glyph-navigate", { detail: orderedCps[nextIndex] }),
+        new CustomEvent("glyph-navigate", { detail: orderedCps[ni] }),
       );
     },
     [currentIndex, orderedCps],
   );
 
-  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+  // ── Zoom helpers ──────────────────────────────────────────────────────────────
+  const zoomToPoint = useCallback(
+    (newZoom: number, originX: number, originY: number) => {
+      setViewport((vp) => {
+        const clamped = clampZoom(newZoom);
+        const ratio = clamped / vp.zoom;
+        return {
+          zoom: clamped,
+          panX: originX - ratio * (originX - vp.panX),
+          panY: originY - ratio * (originY - vp.panY),
+        };
+      });
+    },
+    [],
+  );
+
+  const zoomCentred = useCallback(
+    (newZoom: number) => {
+      if (!canvasAreaRef.current) return;
+      const { width, height } = canvasAreaRef.current.getBoundingClientRect();
+      zoomToPoint(newZoom, width / 2, height / 2);
+    },
+    [zoomToPoint],
+  );
+
+  const zoomReset = useCallback(() => {
+    if (!canvasAreaRef.current) return;
+    const { width, height } = canvasAreaRef.current.getBoundingClientRect();
+    setViewport(centredViewport(width, height));
+  }, []);
+
+  const zoomFit = useCallback(() => {
+    if (!canvasAreaRef.current) return;
+    const { width, height } = canvasAreaRef.current.getBoundingClientRect();
+    const fitZoom = clampZoom(
+      Math.min(width / CANVAS_W, height / CANVAS_H) * 0.85,
+    );
+    setViewport({
+      zoom: fitZoom,
+      panX: (width - CANVAS_W * fitZoom) / 2,
+      panY: (height - CANVAS_H * fitZoom) / 2,
+    });
+  }, []);
+
+  // ── Wheel: zoom centred on cursor (Figma-style) ────────────────────────────
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const el = canvasAreaRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const vp = viewportRef.current;
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+scroll = zoom towards cursor
+        const factor = 1 - e.deltaY * ZOOM_WHEEL_K * 10;
+        zoomToPoint(clampZoom(vp.zoom * factor), mouseX, mouseY);
+      } else {
+        // Plain scroll = pan
+        setViewport((v) => ({
+          ...v,
+          panX: v.panX - e.deltaX,
+          panY: v.panY - e.deltaY,
+        }));
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomToPoint]);
+
+  // ── Spacebar tracking ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const dn = (e: KeyboardEvent) => {
+      if (e.code === "Space" && !e.repeat) {
+        e.preventDefault();
+        spaceHeldRef.current = true;
+      }
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        spaceHeldRef.current = false;
+        setIsPanning(false);
+      }
+    };
+    window.addEventListener("keydown", dn);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", dn);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
       const ctrl = e.ctrlKey || e.metaKey;
+      if (e.code === "Space") return;
       if (e.key === "Escape") {
         onClose();
         return;
       }
-      if (e.key === "ArrowLeft" && (e.ctrlKey || e.metaKey || e.altKey)) {
+      if (e.key === "ArrowLeft" && (ctrl || e.altKey)) {
         e.preventDefault();
         goTo(-1);
       }
-      if (e.key === "ArrowRight" && (e.ctrlKey || e.metaKey || e.altKey)) {
+      if (e.key === "ArrowRight" && (ctrl || e.altKey)) {
         e.preventDefault();
         goTo(1);
       }
       if (ctrl && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();
-        const prev = adjHistory.undo();
-        if (prev) updateAdjustments(codepoint, prev);
+        const p = adjHistory.undo();
+        if (p) updateAdjustments(codepoint, p);
       }
       if (ctrl && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
         e.preventDefault();
         e.stopPropagation();
-        const next = adjHistory.redo();
-        if (next) updateAdjustments(codepoint, next);
+        const n = adjHistory.redo();
+        if (n) updateAdjustments(codepoint, n);
       }
-      // Tool shortcuts
-      if (e.key === "v" && !ctrl) setToolMode("select");
-      if (e.key === "m" && !ctrl) setToolMode("move");
-      if (e.key === "g" && !ctrl) setToolMode("guides");
+      // Zoom shortcuts (Ctrl+= Ctrl+- Ctrl+0 Ctrl+9, and bare +/-)
+      if (ctrl && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        zoomCentred(clampZoom(viewportRef.current.zoom + ZOOM_STEP_KEY));
+      }
+      if (ctrl && e.key === "-") {
+        e.preventDefault();
+        zoomCentred(clampZoom(viewportRef.current.zoom - ZOOM_STEP_KEY));
+      }
+      if (ctrl && e.key === "0") {
+        e.preventDefault();
+        zoomReset();
+      }
+      if (ctrl && e.key === "9") {
+        e.preventDefault();
+        zoomFit();
+      }
+      if (!ctrl) {
+        if (e.key === "v") setToolMode("select");
+        if (e.key === "m") setToolMode("move");
+        if (e.key === "g") setToolMode("guides");
+        if (e.key === "+" || e.key === "=")
+          zoomCentred(clampZoom(viewportRef.current.zoom + ZOOM_STEP_KEY));
+        if (e.key === "-")
+          zoomCentred(clampZoom(viewportRef.current.zoom - ZOOM_STEP_KEY));
+      }
     };
-    window.addEventListener("keydown", handler, { capture: true });
-    return () =>
-      window.removeEventListener("keydown", handler, { capture: true });
-  }, [onClose, goTo, adjHistory, codepoint, updateAdjustments]);
+    window.addEventListener("keydown", h, { capture: true });
+    return () => window.removeEventListener("keydown", h, { capture: true });
+  }, [
+    onClose,
+    goTo,
+    adjHistory,
+    codepoint,
+    updateAdjustments,
+    zoomCentred,
+    zoomReset,
+    zoomFit,
+  ]);
 
   const update = (patch: Partial<GlyphAdjustments>) => {
     const next = { ...adj, ...patch };
@@ -316,9 +489,52 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     updateAdjustments(codepoint, next);
   };
 
-  // ── Move-glyph drag handlers ────────────────────────────────────────────────
+  // ── Snap helpers ─────────────────────────────────────────────────────────────
+  function computeSnap(rawOffX: number, rawOffY: number) {
+    const snapX = Math.abs(rawOffX) <= SNAP_THRESHOLD;
+    const snapY = Math.abs(rawOffY) <= SNAP_THRESHOLD;
+    return {
+      offX: snapX ? 0 : rawOffX,
+      offY: snapY ? 0 : rawOffY,
+      axis: (snapX && snapY
+        ? "both"
+        : snapX
+          ? "x"
+          : snapY
+            ? "y"
+            : null) as SnapAxis,
+    };
+  }
+  function updateSnapLines(axis: SnapAxis) {
+    if (snapLineXRef.current) {
+      snapLineXRef.current.style.display =
+        axis === "x" || axis === "both" ? "block" : "none";
+      snapLineXRef.current.style.left = `${CANVAS_W / 2}px`;
+    }
+    if (snapLineYRef.current) {
+      snapLineYRef.current.style.display =
+        axis === "y" || axis === "both" ? "block" : "none";
+      snapLineYRef.current.style.top = `${CANVAS_H / 2}px`;
+    }
+  }
+
+  // ── Area pointer-down: pan or glyph drag ──────────────────────────────────────
+  const handleAreaPointerDown = useCallback((e: React.MouseEvent) => {
+    if (e.button === 1 || (e.button === 0 && spaceHeldRef.current)) {
+      e.preventDefault();
+      panDragRef.current = {
+        startMouseX: e.clientX,
+        startMouseY: e.clientY,
+        startPanX: viewportRef.current.panX,
+        startPanY: viewportRef.current.panY,
+      };
+      setIsPanning(true);
+    }
+  }, []);
+
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (spaceHeldRef.current || e.button !== 0) return;
       if (toolMode === "move" && parsedSVG) {
         e.preventDefault();
         glyphDragRef.current = {
@@ -334,58 +550,96 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     [toolMode, parsedSVG, adj],
   );
 
+  // ── Pan effect ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!isDraggingGlyph) return;
-
-    const buildLiveTransform = (dx: number, dy: number): string => {
-      const snap = glyphDragRef.current!.adjSnapshot;
-      const newOffX = glyphDragRef.current!.startOffX + dx;
-      const newOffY = glyphDragRef.current!.startOffY + dy;
-      const flipScaleX = snap.flipH ? -1 : 1;
-      const flipScaleY = snap.flipV ? -1 : 1;
-      return [
-        `translate(${cx}, ${cy})`,
-        snap.rotate !== 0 ? `rotate(${snap.rotate})` : "",
-        `scale(${snap.scaleX * flipScaleX}, ${snap.scaleY * flipScaleY})`,
-        `translate(${-cx + newOffX}, ${-cy + newOffY + snap.baseline})`,
-      ]
-        .filter(Boolean)
-        .join(" ");
-    };
-
+    if (!isPanning) return;
     const onMove = (e: MouseEvent) => {
-      if (!glyphDragRef.current || !svgGRef.current) return;
-      const dx = e.clientX - glyphDragRef.current.startX;
-      const dy = e.clientY - glyphDragRef.current.startY;
-      // Direct DOM mutation — zero React re-renders, buttery smooth
-      svgGRef.current.setAttribute("transform", buildLiveTransform(dx, dy));
+      if (!panDragRef.current) return;
+      setViewport((v) => ({
+        ...v,
+        panX:
+          panDragRef.current!.startPanX +
+          (e.clientX - panDragRef.current!.startMouseX),
+        panY:
+          panDragRef.current!.startPanY +
+          (e.clientY - panDragRef.current!.startMouseY),
+      }));
     };
-
-    const onUp = (e: MouseEvent) => {
-      if (!glyphDragRef.current) return;
-      const snap = glyphDragRef.current.adjSnapshot;
-      const dx = e.clientX - glyphDragRef.current.startX;
-      const dy = e.clientY - glyphDragRef.current.startY;
-      const newOffX = Math.round(glyphDragRef.current.startOffX + dx);
-      const newOffY = Math.round(glyphDragRef.current.startOffY + dy);
-      const committed = { ...snap, offsetX: newOffX, offsetY: newOffY };
-      adjHistory.push(committed);
-      updateAdjustments(codepoint, committed);
-      glyphDragRef.current = null;
-      setIsDraggingGlyph(false);
+    const onUp = () => {
+      panDragRef.current = null;
+      setIsPanning(false);
     };
-
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-    // All state read through refs — safe to omit deps
+  }, [isPanning]);
+
+  // ── Glyph drag effect ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isDraggingGlyph) return;
+    const cx = CANVAS_W / 2;
+    const cy = CANVAS_H / 2;
+    const buildT = (offX: number, offY: number) => {
+      const snap = glyphDragRef.current!.adjSnapshot;
+      const fsx = snap.flipH ? -1 : 1;
+      const fsy = snap.flipV ? -1 : 1;
+      return [
+        `translate(${cx}, ${cy})`,
+        snap.rotate !== 0 ? `rotate(${snap.rotate})` : "",
+        `scale(${snap.scaleX * fsx}, ${snap.scaleY * fsy})`,
+        `translate(${-cx + offX}, ${-cy + offY + snap.baseline})`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+    };
+    const onMove = (e: MouseEvent) => {
+      if (!glyphDragRef.current || !svgGRef.current) return;
+      const z = viewportRef.current.zoom;
+      const dx = (e.clientX - glyphDragRef.current.startX) / z;
+      const dy = (e.clientY - glyphDragRef.current.startY) / z;
+      const { offX, offY, axis } = computeSnap(
+        glyphDragRef.current.startOffX + dx,
+        glyphDragRef.current.startOffY + dy,
+      );
+      svgGRef.current.setAttribute("transform", buildT(offX, offY));
+      updateSnapLines(axis);
+      setSnapAxis(axis);
+    };
+    const onUp = (e: MouseEvent) => {
+      if (!glyphDragRef.current) return;
+      const snap = glyphDragRef.current.adjSnapshot;
+      const z = viewportRef.current.zoom;
+      const dx = (e.clientX - glyphDragRef.current.startX) / z;
+      const dy = (e.clientY - glyphDragRef.current.startY) / z;
+      const { offX, offY } = computeSnap(
+        glyphDragRef.current.startOffX + dx,
+        glyphDragRef.current.startOffY + dy,
+      );
+      const committed = {
+        ...snap,
+        offsetX: Math.round(offX),
+        offsetY: Math.round(offY),
+      };
+      adjHistory.push(committed);
+      updateAdjustments(codepoint, committed);
+      glyphDragRef.current = null;
+      setIsDraggingGlyph(false);
+      setSnapAxis(null);
+      updateSnapLines(null);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDraggingGlyph]);
 
-  // ── Move-guides drag handlers ───────────────────────────────────────────────
+  // ── Guide drag ────────────────────────────────────────────────────────────────
   const handleGuideMouseDown = useCallback(
     (e: React.MouseEvent, key: string) => {
       if (toolMode !== "guides") return;
@@ -404,17 +658,16 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
   useEffect(() => {
     if (!draggingGuideKey) return;
     const onMove = (e: MouseEvent) => {
-      if (!guideDragRef.current || !canvasRef.current) return;
-      const canvasRect = canvasRef.current.getBoundingClientRect();
+      if (!guideDragRef.current) return;
+      const z = viewportRef.current.zoom;
       const dy = e.clientY - guideDragRef.current.startMouseY;
-      const fracDelta = dy / canvasRect.height;
-      const newFrac = Math.max(
-        0.01,
-        Math.min(0.99, guideDragRef.current.startFrac + fracDelta),
-      );
+      const fracDelta = dy / z / CANVAS_H;
       setGuidePositions((prev) => ({
         ...prev,
-        [guideDragRef.current!.key]: newFrac,
+        [guideDragRef.current!.key]: Math.max(
+          0.01,
+          Math.min(0.99, guideDragRef.current!.startFrac + fracDelta),
+        ),
       }));
     };
     const onUp = () => {
@@ -429,6 +682,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     };
   }, [draggingGuideKey]);
 
+  // ── Upload ────────────────────────────────────────────────────────────────────
   const handleUpload = () => {
     autoFitApplied.current = false;
     fileInputRef.current?.click();
@@ -444,58 +698,49 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     e.target.value = "";
   };
 
-  // Reset snaps to auto-fit scale (fills cap→baseline guide zone) rather than raw scale=1
-  const getFitDefaults = (): GlyphAdjustments => {
-    if (parsedSVG) {
-      const fitted = computeAutoFit(parsedSVG);
-      return { ...DEFAULT_ADJUSTMENTS, ...fitted };
-    }
-    return { ...DEFAULT_ADJUSTMENTS };
-  };
+  const getFitDefaults = (): GlyphAdjustments =>
+    parsedSVG
+      ? { ...DEFAULT_ADJUSTMENTS, ...computeAutoFit(parsedSVG) }
+      : { ...DEFAULT_ADJUSTMENTS };
   const resetAdj = () => {
-    const next = getFitDefaults();
-    adjHistory.push(next);
-    updateAdjustments(codepoint, next);
+    const n = getFitDefaults();
+    adjHistory.push(n);
+    updateAdjustments(codepoint, n);
   };
   const resetSpacing = () => {
-    const next = { ...adj, ...DEFAULT_SPACING };
-    adjHistory.push(next);
-    updateAdjustments(codepoint, next);
+    const n = { ...adj, ...DEFAULT_SPACING };
+    adjHistory.push(n);
+    updateAdjustments(codepoint, n);
   };
 
+  // ── SVG transform ─────────────────────────────────────────────────────────────
   const cx = CANVAS_W / 2;
   const cy = CANVAS_H / 2;
-
-  const buildInlineSVGTransform = () => {
-    if (!parsedSVG) return { fitTransform: "", adjustTransform: "" };
-    const padding = 40;
-    const availW = CANVAS_W - padding * 2;
-    const availH = CANVAS_H - padding * 2;
-    const scaleToFit = Math.min(
-      availW / parsedSVG.width,
-      availH / parsedSVG.height,
-    );
-    const fitW = parsedSVG.width * scaleToFit;
-    const fitH = parsedSVG.height * scaleToFit;
-    const fitX = (CANVAS_W - fitW) / 2;
-    const fitY = (CANVAS_H - fitH) / 2;
-    const fitTransform = `translate(${fitX}, ${fitY}) scale(${scaleToFit})`;
-    const flipScaleX = adj.flipH ? -1 : 1;
-    const flipScaleY = adj.flipV ? -1 : 1;
-    const adjustTransform = [
+  const adjustTransform = useMemo(() => {
+    if (!parsedSVG) return "";
+    const fsx = adj.flipH ? -1 : 1;
+    const fsy = adj.flipV ? -1 : 1;
+    return [
       `translate(${cx}, ${cy})`,
       adj.rotate !== 0 ? `rotate(${adj.rotate})` : "",
-      `scale(${adj.scaleX * flipScaleX}, ${adj.scaleY * flipScaleY})`,
+      `scale(${adj.scaleX * fsx}, ${adj.scaleY * fsy})`,
       `translate(${-cx + adj.offsetX}, ${-cy + adj.offsetY + adj.baseline})`,
     ]
       .filter(Boolean)
       .join(" ");
-    return { fitTransform, adjustTransform };
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adj, parsedSVG]);
 
-  const { adjustTransform } = buildInlineSVGTransform();
-
-  // Scale is stored as 0.1–3 internally; UI shows/accepts percent (10–300)
+  const canvasCursor = isPanning
+    ? "grabbing"
+    : spaceHeldRef.current
+      ? "grab"
+      : toolMode === "move"
+        ? isDraggingGlyph
+          ? "grabbing"
+          : "grab"
+        : "default";
+  const zoomPct = Math.round(viewport.zoom * 100);
   const scaleXPct = Math.round(adj.scaleX * 100);
   const scaleYPct = Math.round(adj.scaleY * 100);
   const handleScaleXPct = (pct: number) => {
@@ -507,16 +752,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
     update(scaleLocked ? { scaleX: v, scaleY: v } : { scaleY: v });
   };
 
-  // Canvas cursor style
-  const canvasCursor =
-    toolMode === "move"
-      ? isDraggingGlyph
-        ? "grabbing"
-        : "grab"
-      : toolMode === "guides"
-        ? "default"
-        : "default";
-
+  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <div className={styles.root}>
       <input
@@ -545,7 +781,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
           </svg>
           Back to grid
         </button>
-
         <div className={styles.glyphTitle}>
           <span className={styles.glyphChar}>{char}</span>
           <div className={styles.glyphMeta}>
@@ -565,7 +800,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             </span>
           </div>
         </div>
-
         <div className={styles.localUndoRow}>
           <button
             className={styles.localUndoBtn}
@@ -620,7 +854,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             </svg>
           </button>
         </div>
-
         <div className={styles.navButtons}>
           <button
             className={styles.navBtn}
@@ -662,14 +895,27 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
 
       {/* ── Body ── */}
       <div className={styles.body}>
-        {/* Canvas */}
-        <div className={styles.canvasArea}>
-          {/* ── Tool palette ── */}
+        {/* ══════════════════════════════════════════════════════════════════════
+            Canvas area — fills all available space, clips zoom layer
+        ══════════════════════════════════════════════════════════════════════ */}
+        <div
+          ref={canvasAreaRef}
+          className={styles.canvasArea}
+          onMouseDown={handleAreaPointerDown}
+          style={{
+            cursor: isPanning
+              ? "grabbing"
+              : spaceHeldRef.current
+                ? "grab"
+                : undefined,
+          }}
+        >
+          {/* Tool palette */}
           <div className={styles.toolPalette}>
             <button
               className={`${styles.toolBtn} ${toolMode === "select" ? styles.toolBtnActive : ""}`}
               onClick={() => setToolMode("select")}
-              title="Select (V) — default mode"
+              title="Select (V)"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
@@ -683,11 +929,10 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
               </svg>
               <span className={styles.toolBtnLabel}>Select</span>
             </button>
-
             <button
               className={`${styles.toolBtn} ${toolMode === "move" ? styles.toolBtnActive : ""}`}
               onClick={() => setToolMode("move")}
-              title="Move glyph (M) — drag to reposition"
+              title="Move glyph (M) — snaps to X/Y"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
@@ -706,11 +951,10 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
               </svg>
               <span className={styles.toolBtnLabel}>Move</span>
             </button>
-
             <button
               className={`${styles.toolBtn} ${toolMode === "guides" ? styles.toolBtnActive : ""}`}
               onClick={() => setToolMode("guides")}
-              title="Move guides (G) — drag guide lines"
+              title="Move guides (G)"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path
@@ -732,157 +976,295 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             </button>
           </div>
 
+          {/* ── Zoom controls (bottom-left, Figma-style) ── */}
+          <div className={styles.zoomControls}>
+            <button
+              className={styles.zoomBtn}
+              onClick={() =>
+                zoomCentred(clampZoom(viewport.zoom - ZOOM_STEP_KEY))
+              }
+              disabled={viewport.zoom <= ZOOM_MIN}
+              title="Zoom out (−)"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path
+                  d="M2 6h8"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+            <button
+              className={styles.zoomLevel}
+              onClick={zoomReset}
+              onDoubleClick={zoomFit}
+              title="Click: reset 100% · Double-click: fit · Ctrl+0"
+            >
+              {zoomPct}%
+            </button>
+            <button
+              className={styles.zoomBtn}
+              onClick={() =>
+                zoomCentred(clampZoom(viewport.zoom + ZOOM_STEP_KEY))
+              }
+              disabled={viewport.zoom >= ZOOM_MAX}
+              title="Zoom in (+)"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path
+                  d="M6 2v8M2 6h8"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+            <div className={styles.zoomDivider} />
+            <button
+              className={styles.zoomFitBtn}
+              onClick={zoomFit}
+              title="Fit to screen (Ctrl+9)"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path
+                  d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Fit
+            </button>
+          </div>
+
+          {/* ── Keyboard hint strip (appears when not at 100%) ── */}
+          {viewport.zoom !== 1 && (
+            <div className={styles.zoomHint}>
+              <kbd>Ctrl+scroll</kbd> zoom · <kbd>Space</kbd>+drag pan ·{" "}
+              <kbd>Ctrl+0</kbd> reset
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════
+              Zoom layer — the canvas card lives here, translated + scaled
+          ══════════════════════════════════════════════════════════════════ */}
           <div
-            ref={canvasRef}
-            className={styles.canvas}
-            style={{ width: CANVAS_W, height: CANVAS_H, cursor: canvasCursor }}
-            onMouseDown={handleCanvasMouseDown}
+            className={styles.zoomLayer}
+            style={{
+              transform: `translate(${viewport.panX}px, ${viewport.panY}px) scale(${viewport.zoom})`,
+              transformOrigin: "0 0",
+              width: CANVAS_W,
+              height: CANVAS_H,
+            }}
           >
-            {/* Guide lines */}
-            {GUIDE_LINES.map(
-              (g) =>
-                visibleGuides[g.key] && (
-                  <div
-                    key={g.key}
-                    className={`${styles.guideLine} ${toolMode === "guides" ? styles.guideLineDraggable : ""} ${draggingGuideKey === g.key ? styles.guideLineDragging : ""}`}
-                    style={
-                      {
-                        top: `${guidePositions[g.key] * 100}%`,
-                        "--guide-color": g.color,
-                      } as React.CSSProperties
-                    }
-                    onMouseDown={(e) => handleGuideMouseDown(e, g.key)}
-                  >
-                    <span className={styles.guideLabel}>{g.label}</span>
-                    {toolMode === "guides" && (
-                      <span className={styles.guideDragHandle}>
-                        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                          <circle cx="2" cy="2" r="1" fill="currentColor" />
-                          <circle cx="6" cy="2" r="1" fill="currentColor" />
-                          <circle cx="2" cy="6" r="1" fill="currentColor" />
-                          <circle cx="6" cy="6" r="1" fill="currentColor" />
-                        </svg>
-                      </span>
-                    )}
-                  </div>
-                ),
-            )}
-
-            {/* Vertical bearing guides */}
-            {visibleGuides.leftBearing && (
-              <div
-                className={styles.guideLineV}
-                style={
-                  {
-                    left: `${(adj.leftBearing / adj.advanceWidth) * 100}%`,
-                    "--guide-color": "#94a3b8",
-                  } as React.CSSProperties
-                }
-              />
-            )}
-            {visibleGuides.rightBearing && (
-              <div
-                className={styles.guideLineV}
-                style={
-                  {
-                    right: `${(adj.leftBearing / adj.advanceWidth) * 100}%`,
-                    "--guide-color": "#94a3b8",
-                  } as React.CSSProperties
-                }
-              />
-            )}
-
-            {parsedSVG ? (
-              <div
-                className={`${styles.svgWrapper} ${toolMode === "move" ? styles.svgWrapperMovable : ""}`}
-              >
-                <svg
-                  width={CANVAS_W}
-                  height={CANVAS_H}
-                  viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    overflow: "visible",
-                  }}
-                >
-                  <g ref={svgGRef} transform={adjustTransform}>
-                    <svg
-                      x={0}
-                      y={0}
-                      width={CANVAS_W}
-                      height={CANVAS_H}
-                      viewBox={parsedSVG.viewBox}
-                      preserveAspectRatio="xMidYMid meet"
-                      overflow="visible"
+            <div
+              ref={canvasRef}
+              className={styles.canvas}
+              style={{
+                width: CANVAS_W,
+                height: CANVAS_H,
+                cursor: canvasCursor,
+              }}
+              onMouseDown={handleCanvasMouseDown}
+            >
+              {/* Guides */}
+              {GUIDE_LINES.map(
+                (g) =>
+                  visibleGuides[g.key] && (
+                    <div
+                      key={g.key}
+                      className={`${styles.guideLine} ${toolMode === "guides" ? styles.guideLineDraggable : ""} ${draggingGuideKey === g.key ? styles.guideLineDragging : ""}`}
+                      style={
+                        {
+                          top: `${guidePositions[g.key] * 100}%`,
+                          "--guide-color": g.color,
+                        } as React.CSSProperties
+                      }
+                      onMouseDown={(e) => handleGuideMouseDown(e, g.key)}
                     >
-                      <g
-                        dangerouslySetInnerHTML={{
-                          __html: parsedSVG.innerContent,
-                        }}
+                      <span className={styles.guideLabel}>{g.label}</span>
+                      {toolMode === "guides" && (
+                        <span className={styles.guideDragHandle}>
+                          <svg
+                            width="8"
+                            height="8"
+                            viewBox="0 0 8 8"
+                            fill="none"
+                          >
+                            <circle cx="2" cy="2" r="1" fill="currentColor" />
+                            <circle cx="6" cy="2" r="1" fill="currentColor" />
+                            <circle cx="2" cy="6" r="1" fill="currentColor" />
+                            <circle cx="6" cy="6" r="1" fill="currentColor" />
+                          </svg>
+                        </span>
+                      )}
+                    </div>
+                  ),
+              )}
+              {visibleGuides.leftBearing && (
+                <div
+                  className={styles.guideLineV}
+                  style={
+                    {
+                      left: `${(adj.leftBearing / adj.advanceWidth) * 100}%`,
+                      "--guide-color": "#94a3b8",
+                    } as React.CSSProperties
+                  }
+                />
+              )}
+              {visibleGuides.rightBearing && (
+                <div
+                  className={styles.guideLineV}
+                  style={
+                    {
+                      right: `${(adj.leftBearing / adj.advanceWidth) * 100}%`,
+                      "--guide-color": "#94a3b8",
+                    } as React.CSSProperties
+                  }
+                />
+              )}
+
+              {/* Snap lines */}
+              {toolMode === "move" && (
+                <>
+                  <div
+                    ref={snapLineXRef}
+                    className={styles.snapLineX}
+                    style={{ display: "none", left: `${CANVAS_W / 2}px` }}
+                  />
+                  <div
+                    ref={snapLineYRef}
+                    className={styles.snapLineY}
+                    style={{ display: "none", top: `${CANVAS_H / 2}px` }}
+                  />
+                  {snapAxis === "both" && (
+                    <div
+                      className={styles.snapOriginDot}
+                      style={{ left: CANVAS_W / 2, top: CANVAS_H / 2 }}
+                    />
+                  )}
+                </>
+              )}
+
+              {/* SVG glyph */}
+              {parsedSVG ? (
+                <div
+                  className={`${styles.svgWrapper} ${toolMode === "move" ? styles.svgWrapperMovable : ""}`}
+                >
+                  <svg
+                    width={CANVAS_W}
+                    height={CANVAS_H}
+                    viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      overflow: "visible",
+                    }}
+                  >
+                    <g ref={svgGRef} transform={adjustTransform}>
+                      <svg
+                        x={0}
+                        y={0}
+                        width={CANVAS_W}
+                        height={CANVAS_H}
+                        viewBox={parsedSVG.viewBox}
+                        preserveAspectRatio="xMidYMid meet"
+                        overflow="visible"
+                      >
+                        <g
+                          dangerouslySetInnerHTML={{
+                            __html: parsedSVG.innerContent,
+                          }}
+                        />
+                      </svg>
+                    </g>
+                  </svg>
+                </div>
+              ) : (
+                <div className={styles.emptyCanvas}>
+                  <div className={styles.emptyChar}>{char}</div>
+                  <button className={styles.uploadBtn} onClick={handleUpload}>
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <path
+                        d="M7 2v7M4 5l3-3 3 3"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M2 10h10"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
                       />
                     </svg>
-                  </g>
-                </svg>
-              </div>
-            ) : (
-              <div className={styles.emptyCanvas}>
-                <div className={styles.emptyChar}>{char}</div>
-                <button className={styles.uploadBtn} onClick={handleUpload}>
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    Upload SVG
+                  </button>
+                </div>
+              )}
+
+              {glyph?.svgContent && (
+                <button
+                  className={styles.replaceBtn}
+                  onClick={handleUpload}
+                  title="Replace SVG"
+                >
+                  <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
                     <path
-                      d="M7 2v7M4 5l3-3 3 3"
+                      d="M5.5 1v5M3 4l2.5-3L8 4"
                       stroke="currentColor"
-                      strokeWidth="1.4"
+                      strokeWidth="1.3"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
                     <path
-                      d="M2 10h10"
+                      d="M1 8h9"
                       stroke="currentColor"
-                      strokeWidth="1.4"
+                      strokeWidth="1.3"
                       strokeLinecap="round"
                     />
                   </svg>
-                  Upload SVG
+                  Replace
                 </button>
-              </div>
-            )}
+              )}
 
-            {glyph?.svgContent && (
-              <button
-                className={styles.replaceBtn}
-                onClick={handleUpload}
-                title="Replace SVG"
-              >
-                <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-                  <path
-                    d="M5.5 1v5M3 4l2.5-3L8 4"
-                    stroke="currentColor"
-                    strokeWidth="1.3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M1 8h9"
-                    stroke="currentColor"
-                    strokeWidth="1.3"
-                    strokeLinecap="round"
-                  />
-                </svg>
-                Replace
-              </button>
-            )}
-
-            {/* Active tool hint overlay */}
-            {toolMode !== "select" && !isDraggingGlyph && !draggingGuideKey && (
-              <div className={styles.toolHint}>
-                {toolMode === "move" && "Drag to reposition glyph"}
-                {toolMode === "guides" && "Drag a guide line to reposition it"}
-              </div>
-            )}
+              {/* Tool hints — font scaled inverse to viewport zoom so they stay legible */}
+              {toolMode === "move" && !isDraggingGlyph && (
+                <div
+                  className={styles.toolHint}
+                  style={{ fontSize: `${11 / viewport.zoom}px` }}
+                >
+                  Drag to reposition — snaps to X / Y axis
+                </div>
+              )}
+              {toolMode === "guides" && !draggingGuideKey && (
+                <div
+                  className={styles.toolHint}
+                  style={{ fontSize: `${11 / viewport.zoom}px` }}
+                >
+                  Drag a guide line to reposition it
+                </div>
+              )}
+              {isDraggingGlyph && snapAxis !== null && (
+                <div
+                  className={styles.snapLabel}
+                  style={{ fontSize: `${11 / viewport.zoom}px` }}
+                >
+                  {snapAxis === "both"
+                    ? "⊕ Origin"
+                    : snapAxis === "x"
+                      ? "— X axis"
+                      : "| Y axis"}
+                </div>
+              )}
+            </div>
           </div>
+          {/* end zoomLayer */}
 
+          {/* Canvas info — outside zoom layer, always same size */}
           <div className={styles.canvasInfo}>
             <span>Em: 1000 UPM</span>
             <span>Advance: {adj.advanceWidth}u</span>
@@ -898,8 +1280,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
             )}
           </div>
         </div>
+        {/* end canvasArea */}
 
-        {/* Controls panel */}
+        {/* ── Controls panel ── */}
         <div className={styles.controls}>
           <div className={styles.tabs}>
             {(["transform", "spacing", "guides"] as const).map((tab) => (
@@ -914,21 +1297,14 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
           </div>
 
           <div className={styles.tabContent}>
-            {/* ── Transform tab ── */}
             {activeTab === "transform" && (
               <div className={styles.section}>
-                {/* ── Scale ── */}
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Scale X</span>
                     <button
                       className={`${styles.lockBtn} ${scaleLocked ? styles.lockBtnActive : ""}`}
                       onClick={() => setScaleLocked((l) => !l)}
-                      title={
-                        scaleLocked
-                          ? "Unlock X/Y scale"
-                          : "Lock X/Y scale together"
-                      }
                     >
                       {scaleLocked ? (
                         <svg
@@ -1008,7 +1384,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </div>
                   </div>
                 </div>
-
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Scale Y</span>
@@ -1068,10 +1443,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </div>
                   </div>
                 </div>
-
                 <div className={styles.sectionDivider} />
-
-                {/* ── Position ── */}
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Offset X</span>
@@ -1102,7 +1474,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     />
                   </div>
                 </div>
-
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Offset Y</span>
@@ -1133,10 +1504,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     />
                   </div>
                 </div>
-
                 <div className={styles.sectionDivider} />
-
-                {/* ── Rotation ── */}
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Rotate</span>
@@ -1170,7 +1538,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </div>
                   </div>
                 </div>
-
                 <div className={styles.fieldGroup}>
                   <div className={styles.fieldLabelRow}>
                     <span className={styles.fieldLabel}>Baseline shift</span>
@@ -1201,10 +1568,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     />
                   </div>
                 </div>
-
                 <div className={styles.sectionDivider} />
-
-                {/* ── Flip ── */}
                 <div className={styles.fieldGroup}>
                   <span className={styles.fieldLabel}>Flip</span>
                   <div className={styles.flipRow}>
@@ -1250,14 +1614,12 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </button>
                   </div>
                 </div>
-
                 <button className={styles.resetBtn} onClick={resetAdj}>
                   Reset to fit guidelines
                 </button>
               </div>
             )}
 
-            {/* ── Spacing tab ── */}
             {activeTab === "spacing" && (
               <div className={styles.section}>
                 <div className={styles.fieldGroup}>
@@ -1291,7 +1653,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     />
                   </div>
                 </div>
-
                 <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>
                     Left side bearing <span className={styles.unit}>units</span>
@@ -1321,7 +1682,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     />
                   </div>
                 </div>
-
                 <div className={styles.infoBox}>
                   <div className={styles.infoRow}>
                     <span>Right side bearing</span>
@@ -1340,7 +1700,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </strong>
                   </div>
                 </div>
-
                 <div className={styles.spacingViz}>
                   <div className={styles.spacingTrack}>
                     <div
@@ -1360,14 +1719,12 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     <span>RSB</span>
                   </div>
                 </div>
-
                 <button className={styles.resetBtn} onClick={resetSpacing}>
                   Reset spacing to default
                 </button>
               </div>
             )}
 
-            {/* ── Guides tab ── */}
             {activeTab === "guides" && (
               <div className={styles.section}>
                 <p className={styles.guidesNote}>
@@ -1387,10 +1744,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     <button
                       className={`${styles.toggleSmall} ${visibleGuides[g.key] ? styles.toggleSmallOn : ""}`}
                       onClick={() =>
-                        setVisibleGuides((prev) => ({
-                          ...prev,
-                          [g.key]: !prev[g.key],
-                        }))
+                        setVisibleGuides((p) => ({ ...p, [g.key]: !p[g.key] }))
                       }
                       role="switch"
                       aria-checked={visibleGuides[g.key]}
@@ -1399,9 +1753,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     </button>
                   </div>
                 ))}
-
                 <div className={styles.guideDivider} />
-
                 <div className={styles.guideToggleRow}>
                   <span
                     className={styles.guideColorDot}
@@ -1411,9 +1763,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                   <button
                     className={`${styles.toggleSmall} ${visibleGuides.leftBearing ? styles.toggleSmallOn : ""}`}
                     onClick={() =>
-                      setVisibleGuides((prev) => ({
-                        ...prev,
-                        leftBearing: !prev.leftBearing,
+                      setVisibleGuides((p) => ({
+                        ...p,
+                        leftBearing: !p.leftBearing,
                       }))
                     }
                     role="switch"
@@ -1422,7 +1774,6 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     <span className={styles.toggleSmallThumb} />
                   </button>
                 </div>
-
                 <div className={styles.guideToggleRow}>
                   <span
                     className={styles.guideColorDot}
@@ -1432,9 +1783,9 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                   <button
                     className={`${styles.toggleSmall} ${visibleGuides.rightBearing ? styles.toggleSmallOn : ""}`}
                     onClick={() =>
-                      setVisibleGuides((prev) => ({
-                        ...prev,
-                        rightBearing: !prev.rightBearing,
+                      setVisibleGuides((p) => ({
+                        ...p,
+                        rightBearing: !p.rightBearing,
                       }))
                     }
                     role="switch"
@@ -1443,9 +1794,7 @@ export default function GlyphEditor({ codepoint, onClose }: GlyphEditorProps) {
                     <span className={styles.toggleSmallThumb} />
                   </button>
                 </div>
-
                 <div className={styles.guideDivider} />
-
                 <button
                   className={styles.resetBtn}
                   onClick={() => {

@@ -929,3 +929,358 @@
   border-color: var(--accent-hover);
   color: white;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Append these rules to src/components/GlyphEditor.module.css
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Snap indicator: vertical line (X-axis snap) ── */
+.snapLineX {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  /* offset so the 1px line is centred on the coordinate */
+  transform: translateX(-50%);
+  background: #3b82f6;
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 20;
+  /* dashed via repeating-linear-gradient for a crisp look */
+  background: repeating-linear-gradient(
+    to bottom,
+    #3b82f6 0px,
+    #3b82f6 6px,
+    transparent 6px,
+    transparent 10px
+  );
+}
+
+/* ── Snap indicator: horizontal line (Y-axis snap) ── */
+.snapLineY {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 20;
+  background: repeating-linear-gradient(
+    to right,
+    #3b82f6 0px,
+    #3b82f6 6px,
+    transparent 6px,
+    transparent 10px
+  );
+  opacity: 0.7;
+}
+
+/* ── Origin snap dot (both axes) ── */
+.snapOriginDot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3b82f6;
+  /* centre it on the coordinate */
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 21;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+  animation: snapPulse 0.4s ease;
+}
+
+@keyframes snapPulse {
+  0% {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 0.5;
+  }
+  60% {
+    transform: translate(-50%, -50%) scale(1.4);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+/* ── Snap label shown during drag ── */
+.snapLabel {
+  position: absolute;
+  bottom: 44px; /* above the tool-hint */
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  padding: 4px 12px;
+  border-radius: 99px;
+  white-space: nowrap;
+  z-index: 25;
+  pointer-events: none;
+  letter-spacing: 0.04em;
+  animation: snapLabelIn 0.15s ease;
+}
+
+@keyframes snapLabelIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Append these rules to src/components/GlyphEditor.module.css
+   ═══════════════════════════════════════════════════════════════════════════════
+
+   ALSO: Update .canvasArea — add these two lines to the existing rule:
+       overflow: hidden;
+       position: relative;
+   (It already has position: relative in some builds, just ensure overflow:hidden)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── The zoom/pan layer that holds the canvas card ── */
+.zoomLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* width/height set inline to CANVAS_W × CANVAS_H */
+  will-change: transform;
+  /* Smooth zoom feel */
+  transition: none; /* real-time: no CSS transition during wheel/drag */
+}
+
+/* ── Zoom controls toolbar (bottom-left of canvasArea) ── */
+.zoomControls {
+  position: absolute;
+  bottom: 48px; /* sits above canvasInfo bar */
+  left: 16px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 3px 4px;
+  user-select: none;
+}
+
+.zoomBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  transition:
+    background 0.1s,
+    color 0.1s;
+  flex-shrink: 0;
+}
+.zoomBtn:hover:not(:disabled) {
+  background: var(--highlight);
+  color: var(--text-primary);
+}
+.zoomBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Clickable zoom percentage label */
+.zoomLevel {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: transparent;
+  padding: 0 7px;
+  height: 26px;
+  min-width: 46px;
+  text-align: center;
+  border-radius: var(--radius-sm);
+  transition: background 0.1s;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.zoomLevel:hover {
+  background: var(--highlight);
+}
+
+.zoomDivider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+.zoomFitBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  padding: 0 8px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  transition:
+    background 0.1s,
+    color 0.1s;
+  white-space: nowrap;
+}
+.zoomFitBtn:hover {
+  background: var(--highlight);
+  color: var(--text-primary);
+}
+
+/* ── Keyboard shortcut hint bar ── */
+.zoomHint {
+  position: absolute;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 5px 14px;
+  border-radius: 99px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: var(--shadow-sm);
+  animation: hintFadeIn 0.2s ease;
+}
+.zoomHint kbd {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--highlight);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin: 0 1px;
+  font-family: var(--font-sans);
+}
+
+@keyframes hintFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ── Snap indicator: vertical dashed line (X-axis snap) ── */
+.snapLineX {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 20;
+  background: repeating-linear-gradient(
+    to bottom,
+    #3b82f6 0px,
+    #3b82f6 6px,
+    transparent 6px,
+    transparent 10px
+  );
+  opacity: 0.75;
+}
+
+/* ── Snap indicator: horizontal dashed line (Y-axis snap) ── */
+.snapLineY {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 20;
+  background: repeating-linear-gradient(
+    to right,
+    #3b82f6 0px,
+    #3b82f6 6px,
+    transparent 6px,
+    transparent 10px
+  );
+  opacity: 0.75;
+}
+
+/* ── Origin snap dot ── */
+.snapOriginDot {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3b82f6;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 21;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+  animation: snapPulse 0.35s ease;
+}
+@keyframes snapPulse {
+  0% {
+    transform: translate(-50%, -50%) scale(0.4);
+    opacity: 0.4;
+  }
+  60% {
+    transform: translate(-50%, -50%) scale(1.4);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+
+/* ── Snap axis label ── */
+.snapLabel {
+  position: absolute;
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  padding: 4px 12px;
+  border-radius: 99px;
+  white-space: nowrap;
+  z-index: 25;
+  pointer-events: none;
+  letter-spacing: 0.04em;
+  animation: snapLabelIn 0.15s ease;
+}
+@keyframes snapLabelIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
